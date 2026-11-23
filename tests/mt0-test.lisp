@@ -39,6 +39,17 @@
      ("Cmaj7") ("C 4") ("#C4"))
   (ok (signals-with-text (lambda () (parse-pitch text)) 'invalid-pitch text)))
 
+(deftest-parametrize pitch-accidental-reasons
+    ((text)
+     ("Cbbb4") ("C♯♭4") ("Cx#4") ("C##b4") ("B𝄫b3"))
+  ;; music-theory#4: the reason names the accidentals, not a missing octave.
+  (ok (equal "too many or mixed accidentals"
+             (handler-case (parse-pitch text)
+               (invalid-pitch (c) (music-theory-error-reason c)))))
+  (ok (equal "too many or mixed accidentals"
+             (handler-case (parse-pitch-class (subseq text 0 (1- (length text))))
+               (invalid-pitch (c) (music-theory-error-reason c))))))
+
 (deftest pitch-parse-error-is-not-a-chord-error
   (ok (eq :pitch
           (handler-case (parse-pitch "Cmaj7")
