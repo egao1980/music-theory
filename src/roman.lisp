@@ -159,28 +159,275 @@ lowercase numeral (vi, vii°). Data.")
 major scale; the natural minor plus the harmonic minor's V, V7, vii° and vii°7.
 ROMAN-MIXTURE-P compares chords against them. Data.")
 
+;;; Derived tables, computed at load time from the data above. The scanner
+;;; reads the token alists by longest match (%LONGEST-TOKEN), so their order
+;;; carries no meaning.
+
+(defparameter +roman-numeral-tokens+
+  (loop for numeral across +roman-numerals+
+        for degree from 1
+        collect (list* numeral degree :upper)
+        collect (list* (string-downcase numeral) degree :lower))
+  "(text degree . case) for every numeral of +ROMAN-NUMERALS+ in both cases.")
+
+(defparameter +roman-marker-tokens+
+  (remove-duplicates (loop for (nil nil ascii unicode) in +roman-qualities+
+                           collect (list ascii)
+                           collect (list unicode))
+                     :test #'equal)
+  "(marker) for every marker of +ROMAN-QUALITIES+, ASCII and Unicode, \"\" included.")
+
+(defparameter +roman-figure-tokens+
+  (loop for (seventh-p inversion . spellings) in +roman-figures+
+        nconc (loop for figure in spellings
+                    collect (list* figure seventh-p inversion)))
+  "(figure seventh-p . inversion) for every spelling of +ROMAN-FIGURES+, \"\" included.")
+
+(defparameter +quality-tone-fifths+
+  (loop for (quality nil intervals) in +chord-qualities+
+        collect (cons quality (mapcar (lambda (name) (%interval-fifths (parse-interval name)))
+                                      intervals)))
+  "Per quality of +CHORD-QUALITIES+, the fifths offsets of its tones above the
+root, third first. Derived at load time.")
+
+;;; Kernel --------------------------------------------------------------------
+
+(defun %roman-quality (case marker seventh-p)
+  "The quality of +ROMAN-QUALITIES+ for a numeral CASE, a MARKER from either
+column and SEVENTH-P, or NIL when there is none (\"IM\", \"Vo\")."
+  (first (find-if (lambda (row)
+                    (destructuring-bind (quality row-case ascii unicode row-seventh-p) row
+                      (declare (ignore quality))
+                      (and (eq case row-case)
+                           (eq seventh-p row-seventh-p)
+                           (or (string= marker ascii) (string= marker unicode)))))
+                  +roman-qualities+)))
+
+(defun %figure-row (seventh-p inversion)
+  "The +ROMAN-FIGURES+ row for SEVENTH-P and INVERSION, or NIL (a triad in third
+inversion)."
+  (find-if (lambda (row) (and (eq seventh-p (first row)) (eql inversion (second row))))
+           +roman-figures+))
+
+(defun %malformed-roman (reason)
+  "Signal INVALID-ROMAN-NUMERAL for a malformed ROMAN-NUMERAL value (TEXT NIL)."
+  (error 'invalid-roman-numeral :reason reason))
+
+(defun %check-target (target)
+  "Signal INVALID-ROMAN-NUMERAL (TEXT NIL) unless TARGET is what the grammar's
+target reads: an accidental and a numeral, with no marker, no figure and no
+target of its own, i.e. a root-position major or minor triad."
+  (check-type target roman-numeral)
+  (let ((row (assoc (roman-numeral-quality target) +roman-qualities+)))
+    (unless (and row (string= "" (third row)) (not (fifth row)))
+      (%malformed-roman "a target is a major or minor triad"))
+    (unless (zerop (roman-numeral-inversion target))
+      (%malformed-roman "a target is in root position"))
+    (when (roman-numeral-applied-to target)
+      (%malformed-roman "a target has no target of its own"))))
+
+(defun %check-roman (roman)
+  "Signal INVALID-ROMAN-NUMERAL (TEXT NIL) unless ROMAN is well formed: its
+quality has a row in +ROMAN-QUALITIES+, its inversion a figure in
++ROMAN-FIGURES+, and its target, if any, passes %CHECK-TARGET."
+  (check-type roman roman-numeral)
+  (let ((row (assoc (roman-numeral-quality roman) +roman-qualities+)))
+    (unless row
+      (%malformed-roman "quality outside +roman-qualities+"))
+    (unless (%figure-row (fifth row) (roman-numeral-inversion roman))
+      (%malformed-roman "a triad has no third inversion")))
+  (let ((target (roman-numeral-applied-to roman)))
+    (when target (%check-target target))))
+
+(defun %default-root-fifths (key degree quality)
+  "Fifths position of the default root of DEGREE for QUALITY in KEY: the
+natural scale degree, raised a semitone in a minor key for the degrees of
++MINOR-RAISED-DEGREES+ when QUALITY is lowercase."
+  (+ (%degree-fifths key degree :natural)
+     (if (and (eq (key-mode key) :minor)
+              (member degree +minor-raised-degrees+)
+              (eq :lower (second (assoc quality +roman-qualities+))))
+         7
+         0)))
+
+(defun %root-fifths (roman key)
+  "Fifths position of ROMAN's root in KEY: the default root moved by ALTERATION."
+  (+ (%default-root-fifths key (roman-numeral-degree roman) (roman-numeral-quality roman))
+     (* 7 (roman-numeral-alteration roman))))
+
+(defun %chord-tone-fifths (root quality)
+  "Fifths positions of the tones of QUALITY on ROOT (a fifths position): root,
+third, fifth [, seventh]. Unbounded integers; nothing is spelled."
+  (cons root (mapcar (lambda (offset) (+ root offset))
+                     (cdr (assoc quality +quality-tone-fifths+)))))
+
+(defun %tonicized-key (target key)
+  "The key TARGET tonicizes in KEY: its tonic is the ROOT of (CHORD-FOR target
+key), its mode the target's quality (:MAJOR uppercase, :MINOR lowercase)."
+  (make-key :tonic (chord-symbol-root (chord-for target key))
+            :mode (roman-numeral-quality target)))
+
+(defun %reading-key (roman key)
+  "The key ROMAN is read in: KEY, or the key its target tonicizes."
+  (let ((target (roman-numeral-applied-to roman)))
+    (if target (%tonicized-key target key) key)))
+
+(defun %check-chord (chord)
+  "Signal MUSIC-THEORY-ERROR (TEXT NIL) unless CHORD is a triad or seventh chord
+a Roman numeral can name (see ROMAN-FOR)."
+  (check-type chord chord-symbol)
+  (flet ((reject (reason) (error 'music-theory-error :reason reason)))
+    (when (or (chord-symbol-no-chord-p chord) (null (chord-symbol-root chord)))
+      (reject "N.C. has no Roman numeral"))
+    (unless (assoc (chord-symbol-quality chord) +roman-qualities+)
+      (reject "the quality has no Roman numeral"))
+    (when (chord-symbol-extensions chord) (reject "a Roman numeral has no extensions"))
+    (when (chord-symbol-alterations chord) (reject "a Roman numeral has no altered tones"))
+    (when (chord-symbol-suspension chord) (reject "a Roman numeral has no suspension"))
+    (when (chord-symbol-added chord) (reject "a Roman numeral has no added tones"))
+    (when (chord-symbol-omitted chord) (reject "a Roman numeral has no omitted tones"))))
+
+(defun %chord-inversion (chord)
+  "0 for no BASS or the root, else the index of BASS among CHORD's tones (spelling
+must match). MUSIC-THEORY-ERROR (TEXT NIL) when BASS is not a chord tone."
+  (let ((bass (chord-symbol-bass chord)))
+    (if (null bass)
+        0
+        (or (position (pitch-fifths bass)
+                      (%chord-tone-fifths (pitch-fifths (chord-symbol-root chord))
+                                          (chord-symbol-quality chord)))
+            (error 'music-theory-error :reason "the bass is not a chord tone")))))
+
+(defun %roman-text (roman accidentals)
+  "Canonical text of ROMAN's own numeral, without its target: accidental,
+numeral, marker and figure, in the ACCIDENTALS style."
+  (destructuring-bind (case ascii unicode seventh-p)
+      (rest (assoc (roman-numeral-quality roman) +roman-qualities+))
+    (let ((numeral (aref +roman-numerals+ (1- (roman-numeral-degree roman)))))
+      (concatenate 'string
+                   (%accidental-text (roman-numeral-alteration roman) accidentals)
+                   (if (eq case :lower) (string-downcase numeral) numeral)
+                   (ecase accidentals (:ascii ascii) (:unicode unicode))
+                   (third (%figure-row seventh-p (roman-numeral-inversion roman)))))))
+
+;;; Text and chords -----------------------------------------------------------
+
 (defun parse-roman (string)
   "Parse STRING (see the file header) into a ROMAN-NUMERAL."
-  (declare (ignorable string))
-  (%mt2-pending 'parse-roman))
+  (check-type string string)
+  (let* ((text (string-trim +pitch-whitespace+ string))
+         (end (length text))
+         (pos 0))
+    (labels ((fail (reason)
+               (return-from parse-roman
+                 (%parse-failure 'invalid-roman-numeral string reason #'parse-roman)))
+             (scan (alist)
+               ;; The longest token of ALIST at POS, consumed; NIL when none matches.
+               (let ((entry (%longest-token alist text pos)))
+                 (when entry (incf pos (length (car entry))))
+                 entry))
+             (at (char)
+               (and (< pos end) (char= char (char text pos))))
+             (numeral ()
+               ;; accidental numeral → (values alteration degree case)
+               (let ((alteration (cdr (scan +accidental-tokens+)))
+                     (entry (or (scan +roman-numeral-tokens+) (fail "expected a numeral"))))
+                 (values alteration (second entry) (cddr entry))))
+             (chord ()
+               ;; → (values degree alteration quality inversion)
+               (if (at #\N)
+                   ;; "N" triad-figure is bII: degree 2, a flat, uppercase.
+                   (destructuring-bind (seventh-p . inversion)
+                       (progn (incf pos) (cdr (scan +roman-figure-tokens+)))
+                     (when seventh-p (fail "the Neapolitan is a triad"))
+                     (values 2 -1 (%roman-quality :upper "" nil) inversion))
+                   (multiple-value-bind (alteration degree case) (numeral)
+                     ;; "" is a marker and a figure, so both scans match.
+                     (let ((marker (car (scan +roman-marker-tokens+))))
+                       (destructuring-bind (seventh-p . inversion)
+                           (cdr (scan +roman-figure-tokens+))
+                         (values degree alteration
+                                 (or (%roman-quality case marker seventh-p)
+                                     (fail "no quality for this case, marker and figure"))
+                                 inversion)))))))
+      (when (zerop end) (fail "empty"))
+      (multiple-value-bind (degree alteration quality inversion) (chord)
+        (let ((target (when (at #\/)
+                        (incf pos)
+                        (multiple-value-bind (alteration degree case) (numeral)
+                          (make-roman-numeral :degree degree :alteration alteration
+                                              :quality (%roman-quality case "" nil))))))
+          (unless (= pos end) (fail "trailing characters"))
+          (make-roman-numeral :degree degree :alteration alteration :quality quality
+                              :inversion inversion :applied-to target))))))
 
 (defun roman-name (roman &key (accidentals :ascii))
   "Canonical text of ROMAN (\"V65/V\"); ACCIDENTALS is :ASCII or :UNICODE."
-  (declare (ignorable roman accidentals))
-  (%mt2-pending 'roman-name))
+  (check-type accidentals (member :ascii :unicode))
+  (%check-roman roman)
+  (let ((target (roman-numeral-applied-to roman)))
+    (format nil "~A~@[/~A~]"
+            (%roman-text roman accidentals)
+            (and target (%roman-text target accidentals)))))
 
 (defun chord-for (roman key)
   "The CHORD-SYMBOL (ROOT, QUALITY, BASS) that ROMAN names in KEY."
-  (declare (ignorable roman key))
-  (%mt2-pending 'chord-for))
+  (%check-roman roman)
+  (check-type key key)
+  (let* ((quality (roman-numeral-quality roman))
+         (inversion (roman-numeral-inversion roman))
+         ;; Every tone is spelled, so a root-position chord with an unspellable
+         ;; third (#III in C# major: G###) signals INVALID-PITCH too.
+         (tones (mapcar #'fifths-pitch-class
+                        (%chord-tone-fifths (%root-fifths roman (%reading-key roman key))
+                                            quality))))
+    (make-chord-symbol :root (first tones) :quality quality
+                       :bass (and (plusp inversion) (nth inversion tones)))))
 
 (defun roman-for (chord key &key applied-to)
   "The ROMAN-NUMERAL naming CHORD (a CHORD-SYMBOL) in KEY, read literally, or
 as an applied chord of APPLIED-TO when that target is given."
-  (declare (ignorable chord key applied-to))
-  (%mt2-pending 'roman-for))
+  (when applied-to (%check-target applied-to))
+  (%check-chord chord)
+  (check-type key key)
+  (let* ((home (if applied-to (%tonicized-key applied-to key) key))
+         (root (chord-symbol-root chord))
+         (quality (chord-symbol-quality chord))
+         (degree (1+ (mod (- (pitch-class-name-letter root)
+                             (pitch-class-name-letter (key-tonic home)))
+                          7)))
+         (alteration (%alter-difference (%default-root-fifths home degree quality)
+                                        (pitch-fifths root)))
+         (inversion (%chord-inversion chord)))
+    ;; Checked before the constructor, whose slot type would signal TYPE-ERROR.
+    (unless (assoc alteration +accidentals+)
+      (error 'music-theory-error :reason "the root needs more than two accidentals"))
+    (make-roman-numeral :degree degree :alteration alteration :quality quality
+                        :inversion inversion :applied-to applied-to)))
+
+(defparameter +diatonic-romans+
+  (loop for (mode . texts) in +diatonic-numerals+
+        collect (cons mode (mapcar #'parse-roman texts)))
+  "+DIATONIC-NUMERALS+ parsed: per mode, its diatonic ROMAN-NUMERALs. Derived at
+load time, after PARSE-ROMAN is defined.")
 
 (defun roman-mixture-p (roman key)
   "True when ROMAN's chord in KEY is diatonic to the parallel key but not to KEY."
-  (declare (ignorable roman key))
-  (%mt2-pending 'roman-mixture-p))
+  ;; CHORD-FOR first: it validates ROMAN and spells the chord (INVALID-PITCH).
+  (let* ((chord (chord-for roman key))
+         (home (%reading-key roman key))
+         (root (pitch-fifths (chord-symbol-root chord)))
+         (quality (chord-symbol-quality chord)))
+    (flet ((diatonic-p (mode)
+             ;; Compared as (fifths position, quality): integers, so a chord of a
+             ;; theoretical parallel key never needs spelling.
+             (let ((in-mode (make-key :tonic (key-tonic home) :mode mode)))
+               (some (lambda (numeral)
+                       (and (eq quality (roman-numeral-quality numeral))
+                            (= root (%root-fifths numeral in-mode))))
+                     (cdr (assoc mode +diatonic-romans+))))))
+      (and (not (diatonic-p (key-mode home)))
+           (some (lambda (row)
+                   (and (not (eq (car row) (key-mode home))) (diatonic-p (car row))))
+                 +diatonic-romans+)
+           t))))

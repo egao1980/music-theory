@@ -59,8 +59,3 @@ chord symbols (MT3), and spelling, key detection and transposition (MT4).")
    #:parse-roman #:roman-name #:chord-for #:roman-for #:roman-mixture-p))
 
 (in-package #:music-theory)
-
-(defun %mt2-pending (name)
-  "Contract stub for slice MT2. Every call is replaced by the implementation,
-then this function is deleted."
-  (error "music-theory MT2 pending: ~A" name))

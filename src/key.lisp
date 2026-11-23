@@ -90,33 +90,140 @@ Church modes would add rows (dorian -2, mixolydian -1, ...). Data.")
   '((:major . "major") (:minor . "minor"))
   "Mode keyword → its word in key names, read case-insensitively. Data.")
 
+;;; Kernel: positions on the line of fifths -----------------------------------
+;;;
+;;; Pitch classes are handled as PITCH-FIFTHS integers, unbounded, and turned
+;;; back into names only by FIFTHS-PITCH-CLASS, the one place a spelling beyond
+;;; two accidentals signals INVALID-PITCH. An interval moves a pitch the same
+;;; distance on the line of fifths from every start, so the offsets of the
+;;; scales are measured once, at load time, with MT0's TRANSPOSE-PITCH.
+
+(defun %interval-fifths (interval)
+  "How far INTERVAL moves a pitch on the line of fifths (M2 → 2, m3 → -3).
+The same from every start, so it is measured from C4 with TRANSPOSE-PITCH."
+  (pitch-fifths (transpose-pitch (make-spelled-pitch :letter 0 :alter 0 :octave 4) interval)))
+
+(defparameter +scale-fifths+
+  (loop for (scale . semitones) in +scales+
+        collect (cons scale
+                      (coerce (loop for steps from 0
+                                    for s across semitones
+                                    collect (%interval-fifths
+                                             (make-interval :steps steps :semitones s)))
+                              'simple-vector)))
+  "Per scale of +SCALES+, the fifths offsets of degrees 1..7 from the tonic.
+Derived from +SCALES+ at load time.")
+
+(defun %scale-fifths (mode variant)
+  "The fifths offsets (+SCALE-FIFTHS+) of the scale +MODE-VARIANTS+ gives for
+MODE and VARIANT. An unknown VARIANT is a TYPE-ERROR."
+  (let* ((variants (cdr (assoc mode +mode-variants+)))
+         (entry (assoc variant variants)))
+    (unless entry
+      (error 'type-error :datum variant
+                         :expected-type `(member ,@(mapcar #'car variants))))
+    (cdr (assoc (cdr entry) +scale-fifths+))))
+
+(defun %degree-fifths (key degree variant)
+  "Fifths position of scale degree DEGREE (1..7) of KEY in VARIANT. Never signals
+for a spelling: the result may lie beyond two accidentals."
+  (+ (pitch-fifths (key-tonic key))
+     (svref (%scale-fifths (key-mode key) variant) (1- degree))))
+
+(defun %signature-fifths (key)
+  "KEY's signature on the line of fifths, unchecked: tonic + the mode's offset."
+  (+ (pitch-fifths (key-tonic key))
+     (cdr (assoc (key-mode key) +mode-signatures+))))
+
+(defun %signature-p (fifths)
+  "True for a signature of the 30 keys: seven flats to seven sharps."
+  (<= -7 fifths 7))
+
+(defun %alter-difference (from to)
+  "TO's alter minus FROM's, for two fifths positions on the same letter: their
+distance on the line of fifths is 7 per semitone."
+  (multiple-value-bind (difference remainder) (floor (- to from) 7)
+    (assert (zerop remainder) () "fifths positions ~D and ~D are not on one letter" from to)
+    difference))
+
+;;; Keys ----------------------------------------------------------------------
+
 (defun parse-key (string)
   "Parse STRING (see the file header) into one of the 30 KEYs."
-  (declare (ignorable string))
-  (%mt2-pending 'parse-key))
+  (check-type string string)
+  (flet ((fail (reason)
+           (return-from parse-key
+             (%parse-failure 'invalid-key string reason #'parse-key))))
+    (let ((text (string-trim +pitch-whitespace+ string)))
+      ;; Our own FAIL: a bad tonic is INVALID-KEY, never INVALID-PITCH.
+      (multiple-value-bind (letter alter next) (%scan-spelling text #'fail)
+        (let* ((rest (subseq text next))
+               (mode (cond ((string= rest "")
+                            (if (upper-case-p (char text 0)) :major :minor))
+                           ((string= rest "m") :minor)
+                           ((char= #\Space (char rest 0))
+                            (or (car (rassoc (string-left-trim '(#\Space) rest) +mode-words+
+                                             :test #'string-equal))
+                                (fail "unknown mode")))
+                           (t (fail "trailing characters"))))
+               ;; ALTER comes from +ACCIDENTAL-TOKENS+, so the slot types hold.
+               (key (make-key :tonic (make-pitch-class-name :letter letter :alter alter)
+                              :mode mode)))
+          ;; Checked here, with TEXT, rather than by KEY-SIGNATURE (TEXT NIL).
+          (unless (%signature-p (%signature-fifths key))
+            (fail "signature beyond seven sharps or flats"))
+          key)))))
 
 (defun key-name (key &key (accidentals :ascii))
   "Print KEY as \"G major\" or \"F# minor\" (\"F♯ minor\" with :UNICODE)."
-  (declare (ignorable key accidentals))
-  (%mt2-pending 'key-name))
+  (check-type key key)
+  (format nil "~A ~A"
+          (pitch-class-string (key-tonic key) :accidentals accidentals)
+          (cdr (assoc (key-mode key) +mode-words+))))
 
 (defun key-signature (key)
   "Sharps (positive) or flats (negative) of KEY, -7..7. INVALID-KEY beyond that."
-  (declare (ignorable key))
-  (%mt2-pending 'key-signature))
+  (check-type key key)
+  (let ((fifths (%signature-fifths key)))
+    (unless (%signature-p fifths)
+      (error 'invalid-key :reason "signature beyond seven sharps or flats"))
+    fifths))
 
 (defun scale-degrees (key &key (variant :natural))
   "The 7 PITCH-CLASS-NAMEs of KEY's scale (VARIANT :NATURAL, :HARMONIC or :MELODIC)."
-  (declare (ignorable key variant))
-  (%mt2-pending 'scale-degrees))
+  (check-type key key)
+  (let ((tonic (pitch-fifths (key-tonic key))))
+    (loop for offset across (%scale-fifths (key-mode key) variant)
+          collect (fifths-pitch-class (+ tonic offset)))))
 
 (defun degree-of (pitch key &key (variant :natural))
   "(values degree alteration octave) of PITCH in KEY; OCTAVE is NIL for a class."
-  (declare (ignorable pitch key variant))
-  (%mt2-pending 'degree-of))
+  (check-type key key)
+  ;; The variant first: an unknown one is a TYPE-ERROR whatever PITCH is.
+  (%scale-fifths (key-mode key) variant)
+  (let* ((tonic-letter (pitch-class-name-letter (key-tonic key)))
+         (degree (1+ (mod (- (%letter-alter pitch) tonic-letter) 7))))
+    ;; The letter decides the degree, so PITCH and the scale degree share a
+    ;; letter and their alters differ by a whole number of semitones.
+    (values degree
+            (%alter-difference (%degree-fifths key degree variant) (pitch-fifths pitch))
+            (and (spelled-pitch-p pitch)
+                 (floor (- (pitch-diatonic-index pitch) tonic-letter) 7)))))
 
 (defun pitch-of-degree (degree key &key octave (alteration 0) (variant :natural))
   "Scale degree DEGREE of KEY, altered by ALTERATION: a PITCH-CLASS-NAME, or a
 SPELLED-PITCH in the scale starting on the tonic in OCTAVE."
-  (declare (ignorable degree key octave alteration variant))
-  (%mt2-pending 'pitch-of-degree))
+  (check-type degree (integer 1 7))
+  (check-type key key)
+  (check-type alteration integer)
+  (check-type octave (or null integer))
+  ;; FIFTHS-PITCH-CLASS signals INVALID-PITCH before any slot-typed constructor.
+  (let ((class (fifths-pitch-class (+ (%degree-fifths key degree variant) (* 7 alteration)))))
+    (if (null octave)
+        class
+        (make-spelled-pitch
+         :letter (pitch-class-name-letter class)
+         :alter (pitch-class-name-alter class)
+         ;; Diatonic index = tonic letter + 7 * OCTAVE + DEGREE - 1.
+         :octave (floor (+ (pitch-class-name-letter (key-tonic key)) (* 7 octave) (1- degree))
+                        7)))))
