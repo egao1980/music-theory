@@ -36,7 +36,7 @@
 
 (in-package #:music-theory)
 
-(defstruct (interval (:constructor make-interval (&key steps semitones)))
+(defstruct (interval (:constructor make-interval))
   (steps 0 :type integer :read-only t)
   (semitones 0 :type integer :read-only t))
 

@@ -23,12 +23,12 @@
 
 (in-package #:music-theory)
 
-(defstruct (spelled-pitch (:constructor make-spelled-pitch (&key letter (alter 0) octave)))
+(defstruct (spelled-pitch (:constructor make-spelled-pitch))
   (letter 0 :type (integer 0 6) :read-only t)
   (alter 0 :type (integer -2 2) :read-only t)
   (octave 4 :type integer :read-only t))
 
-(defstruct (pitch-class-name (:constructor make-pitch-class-name (&key letter (alter 0))))
+(defstruct (pitch-class-name (:constructor make-pitch-class-name))
   (letter 0 :type (integer 0 6) :read-only t)
   (alter 0 :type (integer -2 2) :read-only t))
 

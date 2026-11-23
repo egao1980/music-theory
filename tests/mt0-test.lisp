@@ -85,7 +85,7 @@
 (deftest-parametrize fifths-positions
     ((fifths name)
      (0 "C") (1 "G") (-1 "F") (6 "F#") (-2 "Bb") (7 "C#") (-7 "Cb")
-     (13 "B#") (19 "B##") (-15 "Fbb") (14 "F##") (-8 "Fb"))
+     (12 "B#") (19 "B##") (-15 "Fbb") (13 "F##") (-8 "Fb"))
   (ok (equalp (parse-pitch-class name) (fifths-pitch-class fifths))))
 
 (deftest fifths-round-trip-and-range
