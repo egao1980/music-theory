@@ -140,7 +140,13 @@ Returns LETTER, ALTER and the index after the accidental. FAIL never returns."
       (funcall fail (if (plusp (length text)) "unknown letter" "empty")))
     ;; "" is a token, so some entry always matches.
     (destructuring-bind (token . alter) (%longest-token +accidental-tokens+ text 1)
-      (values letter alter (+ 1 (length token))))))
+      (let* ((next (+ 1 (length token)))
+             (more (%longest-token +accidental-tokens+ text next)))
+        ;; Another accidental right after the longest one: three or more, or a
+        ;; mix such as "#b" (music-theory#4).
+        (when (plusp (length (car more)))
+          (funcall fail "too many or mixed accidentals"))
+        (values letter alter next)))))
 
 (defun %scan-octave (text start fail)
   "Read [\"-\"] ASCII-digit+ from START to the end of TEXT, range -1..9.
