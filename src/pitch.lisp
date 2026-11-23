@@ -38,49 +38,164 @@
 (defparameter +letter-semitones+ #(0 2 4 5 7 9 11)
   "Semitones above C of each natural letter, in letter order.")
 
-(defun parse-pitch (string)
-  "Parse STRING (see the file header) into a SPELLED-PITCH."
-  (declare (ignorable string))
-  (%mt0-pending 'parse-pitch))
+(defparameter +accidentals+
+  '((-2 "bb" "𝄫" "♭♭")
+    (-1 "b" "♭")
+    (0 "" "")
+    (1 "#" "♯")
+    (2 "##" "𝄪" "x" "♯♯"))
+  "Accidental facts, one row per ALTER: (alter ascii unicode . other-spellings).
+The printers use the ASCII or Unicode column; the parsers accept every string in
+a row. Data, read in both directions.")
 
-(defun pitch-name (pitch &key (accidentals :ascii))
-  "Print PITCH as text. ACCIDENTALS is :ASCII (default) or :UNICODE."
-  (declare (ignorable pitch accidentals))
-  (%mt0-pending 'pitch-name))
+(defparameter +accidental-tokens+
+  (loop for (alter . spellings) in +accidentals+
+        nconc (loop for token in (remove-duplicates spellings :test #'string=)
+                    collect (cons token alter)))
+  "(token . alter) for every accidental spelling in +ACCIDENTALS+. Scanned by
+longest match, so the order carries no meaning.")
 
-(defun parse-pitch-class (string)
-  "Parse letter + accidental (no octave) into a PITCH-CLASS-NAME."
-  (declare (ignorable string))
-  (%mt0-pending 'parse-pitch-class))
+(defparameter +pitch-whitespace+
+  '(#\Space #\Tab #\Newline #\Return #\Linefeed #\Page)
+  "Characters PARSE-PITCH and PARSE-PITCH-CLASS trim from both ends.")
 
-(defun pitch-class-string (pitch-class &key (accidentals :ascii))
-  "Print a PITCH-CLASS-NAME (\"F#\", or \"F♯\" with :UNICODE)."
-  (declare (ignorable pitch-class accidentals))
-  (%mt0-pending 'pitch-class-string))
+;;; Kernel --------------------------------------------------------------------
+
+(defun %letter-alter (pitch-or-class)
+  "LETTER and ALTER of a SPELLED-PITCH or PITCH-CLASS-NAME, as two values."
+  (etypecase pitch-or-class
+    (spelled-pitch
+     (values (spelled-pitch-letter pitch-or-class) (spelled-pitch-alter pitch-or-class)))
+    (pitch-class-name
+     (values (pitch-class-name-letter pitch-or-class) (pitch-class-name-alter pitch-or-class)))))
 
 (defun pitch-midi (pitch)
   "MIDI number of a SPELLED-PITCH: 12 * (octave + 1) + letter semitones + alter."
-  (declare (ignorable pitch))
-  (%mt0-pending 'pitch-midi))
+  (+ (* 12 (1+ (spelled-pitch-octave pitch)))
+     (aref +letter-semitones+ (spelled-pitch-letter pitch))
+     (spelled-pitch-alter pitch)))
 
 (defun pitch-class (pitch)
   "Unspelled pitch class 0..11 of a SPELLED-PITCH or PITCH-CLASS-NAME (Cb → 11)."
-  (declare (ignorable pitch))
-  (%mt0-pending 'pitch-class))
+  (multiple-value-bind (letter alter) (%letter-alter pitch)
+    (mod (+ (aref +letter-semitones+ letter) alter) 12)))
 
 (defun pitch-diatonic-index (pitch)
   "LETTER + 7 * OCTAVE: the staff position, ignoring accidentals (C4 → 28)."
-  (declare (ignorable pitch))
-  (%mt0-pending 'pitch-diatonic-index))
+  (+ (spelled-pitch-letter pitch) (* 7 (spelled-pitch-octave pitch))))
 
 (defun pitch-spelling (pitch)
   "The PITCH-CLASS-NAME of a SPELLED-PITCH (its letter and alter)."
-  (declare (ignorable pitch))
-  (%mt0-pending 'pitch-spelling))
+  (make-pitch-class-name :letter (spelled-pitch-letter pitch)
+                         :alter (spelled-pitch-alter pitch)))
 
 (defun pitch-enharmonic-p (p q)
-  "True when P and Q sound the same: equal MIDI numbers for SPELLED-PITCHes,
-equal pitch classes for PITCH-CLASS-NAMEs. F#4 and Gb4 are enharmonic but not
-EQUALP."
-  (declare (ignorable p q))
-  (%mt0-pending 'pitch-enharmonic-p))
+  "True when P and Q sound the same: equal MIDI numbers when both are
+SPELLED-PITCHes, equal pitch classes otherwise (two PITCH-CLASS-NAMEs, or one
+of each). F#4 and Gb4 are enharmonic but not EQUALP."
+  (if (and (spelled-pitch-p p) (spelled-pitch-p q))
+      (= (pitch-midi p) (pitch-midi q))
+      (= (pitch-class p) (pitch-class q))))
+
+;;; Text ----------------------------------------------------------------------
+
+(defun %parse-failure (type text reason reparse)
+  "Signal the condition TYPE for TEXT, inside a USE-VALUE restart.
+Returns the value given to USE-VALUE, unchecked. The interactive restart reads
+a replacement string from *QUERY-IO* and parses it with REPARSE."
+  (restart-case (error type :text text :reason reason)
+    (use-value (value)
+      :report (lambda (stream)
+                (format stream "Supply a value to return instead of parsing ~S." text))
+      :interactive (lambda ()
+                     (format *query-io* "~&Text to parse instead: ")
+                     (finish-output *query-io*)
+                     (list (funcall reparse (read-line *query-io*))))
+      value)))
+
+(defun %letter-index (char)
+  "Letter index 0..6 of CHAR (A..G or a..g), or NIL."
+  (or (position char +letter-names+)
+      (position char +letter-names+ :key #'char-downcase)))
+
+(defun %ascii-digit-p (char)
+  (char<= #\0 char #\9))
+
+(defun %longest-token (alist string start)
+  "The entry of ALIST whose car is the longest string found at START in STRING, or NIL."
+  (let ((best nil))
+    (dolist (entry alist best)
+      (let* ((token (car entry))
+             (end (+ start (length token))))
+        (when (and (<= end (length string))
+                   (string= token string :start2 start :end2 end)
+                   (or (null best) (> (length token) (length (car best)))))
+          (setf best entry))))))
+
+(defun %scan-spelling (text fail)
+  "Scan letter + accidental at the start of TEXT.
+Returns LETTER, ALTER and the index after the accidental. FAIL never returns."
+  (let ((letter (and (plusp (length text)) (%letter-index (char text 0)))))
+    (unless letter
+      (funcall fail (if (plusp (length text)) "unknown letter" "empty")))
+    ;; "" is a token, so some entry always matches.
+    (destructuring-bind (token . alter) (%longest-token +accidental-tokens+ text 1)
+      (values letter alter (+ 1 (length token))))))
+
+(defun %scan-octave (text start fail)
+  "Read [\"-\"] ASCII-digit+ from START to the end of TEXT, range -1..9.
+FAIL never returns."
+  (let* ((end (length text))
+         (negative (and (< start end) (char= #\- (char text start))))
+         (digits (if negative (1+ start) start))
+         (stop (or (position-if-not #'%ascii-digit-p text :start digits) end)))
+    (cond ((= digits stop) (funcall fail "missing octave"))
+          ((< stop end) (funcall fail "trailing characters")))
+    ;; Only validated ASCII digits reach PARSE-INTEGER.
+    (let ((octave (parse-integer text :start digits :end stop)))
+      (when negative (setf octave (- octave)))
+      (unless (<= -1 octave 9) (funcall fail "octave out of range"))
+      octave)))
+
+(defun parse-pitch (string)
+  "Parse STRING (see the file header) into a SPELLED-PITCH."
+  (check-type string string)
+  (flet ((fail (reason)
+           (return-from parse-pitch
+             (%parse-failure 'invalid-pitch string reason #'parse-pitch))))
+    (let ((text (string-trim +pitch-whitespace+ string)))
+      (multiple-value-bind (letter alter next) (%scan-spelling text #'fail)
+        (make-spelled-pitch :letter letter :alter alter
+                            :octave (%scan-octave text next #'fail))))))
+
+(defun parse-pitch-class (string)
+  "Parse letter + accidental (no octave) into a PITCH-CLASS-NAME."
+  (check-type string string)
+  (flet ((fail (reason)
+           (return-from parse-pitch-class
+             (%parse-failure 'invalid-pitch string reason #'parse-pitch-class))))
+    (let ((text (string-trim +pitch-whitespace+ string)))
+      (multiple-value-bind (letter alter next) (%scan-spelling text #'fail)
+        (unless (= next (length text)) (fail "trailing characters"))
+        (make-pitch-class-name :letter letter :alter alter)))))
+
+(defun %accidental-text (alter accidentals)
+  "Printed accidental for ALTER in the ACCIDENTALS style (:ASCII or :UNICODE)."
+  (check-type accidentals (member :ascii :unicode))
+  (let ((row (assoc alter +accidentals+)))
+    (ecase accidentals
+      (:ascii (second row))
+      (:unicode (third row)))))
+
+(defun pitch-name (pitch &key (accidentals :ascii))
+  "Print PITCH as text. ACCIDENTALS is :ASCII (default) or :UNICODE."
+  (format nil "~C~A~D"
+          (char +letter-names+ (spelled-pitch-letter pitch))
+          (%accidental-text (spelled-pitch-alter pitch) accidentals)
+          (spelled-pitch-octave pitch)))
+
+(defun pitch-class-string (pitch-class &key (accidentals :ascii))
+  "Print a PITCH-CLASS-NAME (\"F#\", or \"F♯\" with :UNICODE)."
+  (format nil "~C~A"
+          (char +letter-names+ (pitch-class-name-letter pitch-class))
+          (%accidental-text (pitch-class-name-alter pitch-class) accidentals)))

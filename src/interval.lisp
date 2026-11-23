@@ -44,55 +44,128 @@
   #((0 :perfect) (2 :major) (4 :major) (5 :perfect) (7 :perfect) (9 :major) (11 :major))
   "For simple steps 0..6: (semitones of the perfect or major form, type). Data.")
 
-(defun parse-interval (string)
-  "Parse an interval name such as \"m3\", \"-P5\" or \"P12\"."
-  (declare (ignorable string))
-  (%mt0-pending 'parse-interval))
+(defparameter +quality-names+
+  '((:doubly-diminished . "dd") (:diminished . "d") (:minor . "m") (:perfect . "P")
+    (:major . "M") (:augmented . "A") (:doubly-augmented . "AA"))
+  "Quality keyword → its text in interval names. Data, read in both directions.")
 
-(defun interval-name (interval)
-  "Name of INTERVAL (see the file header)."
-  (declare (ignorable interval))
-  (%mt0-pending 'interval-name))
+(defparameter +quality-deviations+
+  '((:perfect (-2 . :doubly-diminished) (-1 . :diminished) (0 . :perfect)
+              (1 . :augmented) (2 . :doubly-augmented))
+    (:major (-3 . :doubly-diminished) (-2 . :diminished) (-1 . :minor) (0 . :major)
+            (1 . :augmented) (2 . :doubly-augmented)))
+  "Per interval type, (deviation from the +SIMPLE-INTERVALS+ size . quality).
+INTERVAL-QUALITY reads it by deviation, PARSE-INTERVAL by quality. Data.")
+
+;;; Kernel --------------------------------------------------------------------
+
+(defun %interval-base (steps)
+  "For STEPS >= 0: the semitones of the perfect or major interval of that size
+(whole octaves included), and its type, :PERFECT or :MAJOR."
+  (multiple-value-bind (octaves simple) (floor steps 7)
+    (destructuring-bind (semitones type) (aref +simple-intervals+ simple)
+      (values (+ semitones (* 12 octaves)) type))))
 
 (defun interval-quality (interval)
   "One of :DOUBLY-DIMINISHED :DIMINISHED :MINOR :PERFECT :MAJOR :AUGMENTED
 :DOUBLY-AUGMENTED."
-  (declare (ignorable interval))
-  (%mt0-pending 'interval-quality))
+  (let ((steps (interval-steps interval))
+        (semitones (interval-semitones interval)))
+    ;; A unison is read as ascending, so only STEPS < 0 is normalised.
+    (when (minusp steps)
+      (setf steps (- steps)
+            semitones (- semitones)))
+    (multiple-value-bind (base type) (%interval-base steps)
+      (or (cdr (assoc (- semitones base) (cdr (assoc type +quality-deviations+))))
+          (error 'invalid-interval
+                 :reason "quality beyond doubly augmented or doubly diminished")))))
 
 (defun interval-number (interval)
   "|STEPS| + 1: 1 for a unison, 3 for a third, 12 for a twelfth."
-  (declare (ignorable interval))
-  (%mt0-pending 'interval-number))
+  (1+ (abs (interval-steps interval))))
 
 (defun interval-direction (interval)
   "-1, 0 or 1: the sign of STEPS."
-  (declare (ignorable interval))
-  (%mt0-pending 'interval-direction))
+  (signum (interval-steps interval)))
 
 (defun interval-compound-p (interval)
   "True when |STEPS| > 7 (wider than an octave)."
-  (declare (ignorable interval))
-  (%mt0-pending 'interval-compound-p))
+  (> (abs (interval-steps interval)) 7))
 
 (defun simple-interval (interval)
-  (declare (ignorable interval))
-  (%mt0-pending 'simple-interval))
+  "INTERVAL with whole octaves (7 steps, 12 semitones) removed while |STEPS| > 7,
+keeping the direction: P12 → P5, P15 → P8, P8 → P8, -M9 → -M2."
+  (let* ((steps (interval-steps interval))
+         (sign (if (minusp steps) -1 1))
+         (octaves (if (> (abs steps) 7) (floor (1- (abs steps)) 7) 0)))
+    (make-interval :steps (- steps (* sign 7 octaves))
+                   :semitones (- (interval-semitones interval) (* sign 12 octaves)))))
 
 (defun reverse-interval (interval)
-  (declare (ignorable interval))
-  (%mt0-pending 'reverse-interval))
+  "INTERVAL in the opposite direction, both fields negated: M3 → -M3, A1 → d1."
+  (make-interval :steps (- (interval-steps interval))
+                 :semitones (- (interval-semitones interval))))
 
 (defun invert-interval (interval)
-  (declare (ignorable interval))
-  (%mt0-pending 'invert-interval))
+  "The complement of (SIMPLE-INTERVAL INTERVAL) within the octave, keeping the
+direction: M3 → m6, A4 → d5, P1 → P8, P8 → P1, M10 → m6, -M3 → -m6, A1 → d8."
+  (let ((simple (simple-interval interval))
+        (sign (if (minusp (interval-steps interval)) -1 1)))
+    (make-interval :steps (- (* sign 7) (interval-steps simple))
+                   :semitones (- (* sign 12) (interval-semitones simple)))))
+
+;;; Text ----------------------------------------------------------------------
+
+(defun interval-name (interval)
+  "Name of INTERVAL (see the file header)."
+  (format nil "~:[~;-~]~A~D"
+          (minusp (interval-steps interval))
+          (cdr (assoc (interval-quality interval) +quality-names+))
+          (interval-number interval)))
+
+(defun parse-interval (string)
+  "Parse an interval name such as \"m3\", \"-P5\" or \"P12\"."
+  (check-type string string)
+  (flet ((fail (reason)
+           (return-from parse-interval
+             (%parse-failure 'invalid-interval string reason #'parse-interval))))
+    (let* ((end (length string))
+           (descending (and (plusp end) (char= #\- (char string 0))))
+           (start (if descending 1 0))
+           (split (or (position-if #'%ascii-digit-p string :start start) end))
+           (quality (car (rassoc (subseq string start split) +quality-names+
+                                 :test #'string=))))
+      (unless quality (fail "unknown quality"))
+      ;; Interval numbers are ASCII decimals >= 1 without leading zeros.
+      (unless (and (< split end)
+                   (char/= #\0 (char string split))
+                   (every #'%ascii-digit-p (subseq string split)))
+        (fail "missing interval number"))
+      (let ((steps (1- (parse-integer string :start split))))
+        (when (and descending (zerop steps))
+          (fail "a unison has no direction"))
+        (multiple-value-bind (base type) (%interval-base steps)
+          (let ((deviation (car (rassoc quality (cdr (assoc type +quality-deviations+))))))
+            (unless deviation (fail "quality does not fit the interval number"))
+            (let ((semitones (+ base deviation)))
+              (if descending
+                  (make-interval :steps (- steps) :semitones (- semitones))
+                  (make-interval :steps steps :semitones semitones)))))))))
+
+;;; Pitch arithmetic ----------------------------------------------------------
 
 (defun interval-between (p q)
   "The interval from SPELLED-PITCH P to SPELLED-PITCH Q."
-  (declare (ignorable p q))
-  (%mt0-pending 'interval-between))
+  (make-interval :steps (- (pitch-diatonic-index q) (pitch-diatonic-index p))
+                 :semitones (- (pitch-midi q) (pitch-midi p))))
 
 (defun transpose-pitch (pitch interval)
   "PITCH moved by INTERVAL, spelling preserved (F#4 up M2 → G#4)."
-  (declare (ignorable pitch interval))
-  (%mt0-pending 'transpose-pitch))
+  (let ((index (+ (pitch-diatonic-index pitch) (interval-steps interval)))
+        (midi (+ (pitch-midi pitch) (interval-semitones interval))))
+    (multiple-value-bind (octave letter) (floor index 7)
+      (let ((alter (- midi (* 12 (1+ octave)) (aref +letter-semitones+ letter))))
+        ;; Checked before the constructor, whose slot type would signal TYPE-ERROR.
+        (unless (<= -2 alter 2)
+          (error 'invalid-pitch :reason "needs more than two accidentals"))
+        (make-spelled-pitch :letter letter :alter alter :octave octave)))))

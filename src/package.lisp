@@ -35,8 +35,3 @@ symbols (MT3), and spelling, key detection and transposition (MT4).")
    #:interval-between #:transpose-pitch))
 
 (in-package #:music-theory)
-
-(defun %mt0-pending (name)
-  "Contract stub for slice MT0. Every call is replaced by the implementation,
-then this function is deleted."
-  (error "music-theory MT0 pending: ~A" name))
