@@ -4,9 +4,9 @@
 (defpackage #:music-theory
   (:use #:cl)
   (:nicknames #:stack-music)
-  (:documentation "Spelled pitches, intervals and the line of fifths (MT0).
-Later slices add time and meter (MT1), keys and Roman numerals (MT2), chord
-symbols (MT3), and spelling, key detection and transposition (MT4).")
+  (:documentation "Spelled pitches, intervals and the line of fifths (MT0); time, meter and tempo (MT1).
+Later slices add keys and Roman numerals (MT2), chord symbols (MT3), and
+spelling, key detection and transposition (MT4).")
   (:export
    ;; Conditions (all slices; see conditions.lisp)
    #:music-theory-error #:music-theory-warning
@@ -32,6 +32,15 @@ symbols (MT3), and spelling, key detection and transposition (MT4).")
    #:parse-interval #:interval-name #:interval-quality #:interval-number
    #:interval-direction #:interval-compound-p #:simple-interval
    #:reverse-interval #:invert-interval
-   #:interval-between #:transpose-pitch))
+   #:interval-between #:transpose-pitch
+   ;; Meter (MT1)
+   #:meter #:make-meter #:meter-p #:meter-numerators #:meter-denominator
+   #:parse-meter #:meter-string #:meter-measure-duration #:compound-p
+   #:meter-beats #:beat-unit #:metric-weight
+   ;; Durations (MT1)
+   #:duration-dots #:tuplet-duration #:split-duration
+   ;; Tempo (MT1)
+   #:tempo #:make-tempo #:tempo-p #:tempo-bpm #:tempo-beat-unit
+   #:duration-seconds #:seconds-duration #:max-window-duration))
 
 (in-package #:music-theory)
