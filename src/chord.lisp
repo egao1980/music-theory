@@ -2,14 +2,15 @@
 ;;;;
 ;;;; MT2 defines the CHORD-SYMBOL struct so that ROMAN-FOR and CHORD-FOR have a
 ;;;; chord to convert. MT3 adds the parser, the printer, the dialects and
-;;;; realisation; it fills the slots MT2 leaves empty and keeps their types.
+;;;; realisation (src/chord-symbol.lisp, src/chord-tones.lisp); it fills the
+;;;; slots MT2 leaves empty and keeps their types.
 ;;;;
 ;;;; Slots (all read-only; compared with EQUALP, printed readably):
 ;;;;   ROOT         a PITCH-CLASS-NAME; NIL only for N.C.
 ;;;;   QUALITY      a keyword of +CHORD-QUALITIES+, the closed set below; NIL
 ;;;;                only for N.C.
 ;;;;   EXTENSIONS   extension degrees above the seventh, ascending, from
-;;;;                (9 11 13). MT3 decides which ones a symbol such as C13 lists.
+;;;;                (9 11 13). C13 lists all three (src/chord-symbol.lisp).
 ;;;;   ALTERATIONS  altered chord tones as (degree . alter) pairs, ascending by
 ;;;;                degree: ((5 . -1) (9 . 1)) for 7♭5♯9.
 ;;;;   SUSPENSION   NIL, 2 or 4: the third is replaced by a second or a fourth.
