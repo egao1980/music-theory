@@ -25,8 +25,10 @@
 ;;;;      (4/4: beat 3; 12/8: beat 3); in an additive meter every beat starts a group.
 ;;;;   2  any other beat start.
 ;;;;   3+j  inside a beat of duration D starting at b: the smallest j in 0..5 with
-;;;;      (offset - b) a multiple of D / (s * 2^j), where s = 3 when D's numerator
-;;;;      (in lowest terms) is 3 (a dotted beat), else 2.
+;;;;      (offset - b) a multiple of D / (s * 2^j), where s is D's numerator in
+;;;;      lowest terms when it is greater than 1, else 2. A dotted beat (3/8)
+;;;;      splits in three, a five-eighth beat of an additive meter (3+5/8) in five
+;;;;      eighths, a plain beat (1/4) in halves (music-theory#7).
 ;;;;   9  off every grid above (e.g. a triplet position in 4/4).
 
 (in-package #:music-theory)
@@ -91,8 +93,8 @@ The only place that tells the three apart."
 ;;;                     pairs of 4 or more equal beats of an even count), else
 ;;;                     the beats, tier weight 2
 ;;;   group, level 2  → its 2 beats
-;;;   beat, level 3   → s parts, s = 3 when the beat's numerator in lowest terms
-;;;                     is 3 (a dotted beat), else 2
+;;;   beat, level 3   → s parts, s = the beat's numerator in lowest terms when
+;;;                     it is > 1 (3 for a dotted beat, 5 for 5/8), else 2
 ;;;   cell, level 4-8 → 2 halves
 ;;;   cell, level 9   → a leaf
 ;;; Below a beat of duration D at b, the starts that first appear in the tier of
@@ -121,7 +123,7 @@ The only place that tells the three apart."
   "The children of NODE as a tier, or NIL when NODE is a leaf."
   (destructuring-bind (start duration level) node
     (when (< level +off-grid-weight+)
-      (let* ((parts (if (and (= level 3) (= 3 (numerator duration))) 3 2))
+      (let* ((parts (if (and (= level 3) (> (numerator duration) 1)) (numerator duration) 2))
              (step (/ duration parts)))
         (cons level
               (loop for k below parts
