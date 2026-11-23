@@ -1,8 +1,9 @@
 ;;;; Conditions for every music-theory slice (CLHS 9). Parse functions signal
 ;;;; these with ERROR / WARN and establish restarts around the signal:
 ;;;;
-;;;;   PARSE-PITCH, PARSE-PITCH-CLASS, PARSE-INTERVAL: a USE-VALUE restart; its
-;;;;     value is returned from the parse function.
+;;;;   PARSE-PITCH, PARSE-PITCH-CLASS, PARSE-INTERVAL, PARSE-KEY (MT2),
+;;;;   PARSE-ROMAN (MT2): a USE-VALUE restart; its value is returned from the
+;;;;     parse function.
 ;;;;   PARSE-CHORD-SYMBOL (MT3): USE-VALUE and SKIP-CHORD-SYMBOL (returns NIL).
 
 (in-package #:music-theory)
@@ -27,7 +28,15 @@ would need more than two accidentals."))
 doubly augmented / doubly diminished, so it has no name in this model."))
 
 (define-condition invalid-meter (music-theory-error) ())
-(define-condition invalid-key (music-theory-error) ())
+(define-condition invalid-key (music-theory-error) ()
+  (:documentation "A key can't be parsed, or its signature lies beyond seven
+sharps or flats (G# major), so it is not one of the 30 keys."))
+
+(define-condition invalid-roman-numeral (music-theory-error) ()
+  (:documentation "A Roman numeral can't be parsed (TEXT is the input), or a
+ROMAN-NUMERAL value is malformed (TEXT NIL): a triad in third inversion, a
+quality outside +ROMAN-QUALITIES+, or an applied target that is not a
+root-position major or minor triad."))
 
 (define-condition chord-symbol-parse-error (music-theory-error)
   ((position :initarg :position :initform nil
