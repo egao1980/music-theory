@@ -5,8 +5,8 @@
   (:use #:cl)
   (:nicknames #:stack-music)
   (:documentation "Spelled pitches, intervals and the line of fifths (MT0); time, meter and tempo (MT1).
-Later slices add time and meter (MT1), keys and Roman numerals (MT2), chord
-symbols (MT3), and spelling, key detection and transposition (MT4).")
+Later slices add keys and Roman numerals (MT2), chord symbols (MT3), and
+spelling, key detection and transposition (MT4).")
   (:export
    ;; Conditions (all slices; see conditions.lisp)
    #:music-theory-error #:music-theory-warning
@@ -44,8 +44,3 @@ symbols (MT3), and spelling, key detection and transposition (MT4).")
    #:duration-seconds #:seconds-duration #:max-window-duration))
 
 (in-package #:music-theory)
-
-(defun %mt1-pending (name)
-  "Contract stub for slice MT1. Every call is replaced by the implementation,
-then this function is deleted."
-  (error "music-theory MT1 pending: ~A" name))
