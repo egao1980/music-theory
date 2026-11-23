@@ -65,6 +65,20 @@
   (ok (equal weights
              (loop for k below (length weights) collect (metric-weight (m text) (* k step))))))
 
+(deftest-parametrize additive-beat-subdivision
+    ((text step weights)
+     ;; music-theory#7: a beat of n/den with n > 1 splits into its n units.
+     ("3+5/8" 1/8 '(0 3 3 1 3 3 3 3))
+     ("2+2+3/8" 1/8 '(0 3 1 3 1 3 3))
+     ("5+2/8" 1/16 '(0 4 3 4 3 4 3 4 3 4 1 4 3 4)))
+  (ok (equal weights
+             (loop for k below (length weights) collect (metric-weight (m text) (* k step))))))
+
+(deftest-parametrize additive-five-eighth-splits
+    ((duration offset pieces)
+     (1/8 1/2 '(1/8)) (1/4 3/8 '(1/4)) (1/4 1/2 '(1/4)) (3/8 1/2 '(3/8)) (5/8 3/8 '(1/8 1/2)))
+  (ok (equal pieces (split-duration duration :meter (m "3+5/8") :offset offset))))
+
 (deftest metric-weight-edges
   (ok (= 9 (metric-weight (m "4/4") 1/12)) "a triplet position is off every grid")
   (ok (= 2 (metric-weight (m "4/4") -1/4)) "a pickup quarter is beat 4")
