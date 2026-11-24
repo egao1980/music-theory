@@ -5,8 +5,9 @@
   (:use #:cl)
   (:nicknames #:stack-music)
   (:documentation "Spelled pitches, intervals and the line of fifths (MT0); time, meter and
-tempo (MT1); keys, scale degrees and Roman numerals (MT2). Later slices add
-chord symbols (MT3), and spelling, key detection and transposition (MT4).")
+tempo (MT1); keys, scale degrees and Roman numerals (MT2); chord symbols: the
+grammar, dialects, realisation and essential tones (MT3). A later slice adds
+spelling, key detection and transposition to a key (MT4).")
   (:export
    ;; Conditions (all slices; see conditions.lisp)
    #:music-theory-error #:music-theory-warning
@@ -46,12 +47,15 @@ chord symbols (MT3), and spelling, key detection and transposition (MT4).")
    #:key #:make-key #:key-p #:key-tonic #:key-mode
    #:parse-key #:key-name #:key-signature
    #:scale-degrees #:degree-of #:pitch-of-degree
-   ;; Chord symbols: the value (MT2); its parser and printer arrive in MT3
+   ;; Chord symbols: the value (MT2)
    #:chord-symbol #:make-chord-symbol #:chord-symbol-p
    #:chord-symbol-root #:chord-symbol-quality #:chord-symbol-extensions
    #:chord-symbol-alterations #:chord-symbol-suspension #:chord-symbol-added
    #:chord-symbol-omitted #:chord-symbol-bass #:chord-symbol-no-chord-p
    #:chord-symbol-text #:chord-symbol-dialect
+   ;; Chord symbols: grammar, dialects, realisation, priorities (MT3)
+   #:parse-chord-symbol #:print-chord-symbol
+   #:chord-tones #:chord-essential-tones #:transpose-chord-symbol
    ;; Roman numerals (MT2)
    #:roman-numeral #:make-roman-numeral #:roman-numeral-p
    #:roman-numeral-degree #:roman-numeral-alteration #:roman-numeral-quality

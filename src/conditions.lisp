@@ -4,7 +4,9 @@
 ;;;;   PARSE-PITCH, PARSE-PITCH-CLASS, PARSE-INTERVAL, PARSE-KEY (MT2),
 ;;;;   PARSE-ROMAN (MT2): a USE-VALUE restart; its value is returned from the
 ;;;;     parse function.
-;;;;   PARSE-CHORD-SYMBOL (MT3): USE-VALUE and SKIP-CHORD-SYMBOL (returns NIL).
+;;;;   PARSE-CHORD-SYMBOL (MT3): USE-VALUE and SKIP-CHORD-SYMBOL (returns NIL)
+;;;;     around CHORD-SYMBOL-PARSE-ERROR; USE-VALUE (a quality keyword) around
+;;;;     the UNKNOWN-CHORD-QUALITY warning.
 
 (in-package #:music-theory)
 
@@ -44,12 +46,21 @@ root-position major or minor triad."))
              :documentation "Zero-based index into TEXT where parsing stopped.")
    (expected :initarg :expected :initform nil
              :reader chord-symbol-parse-error-expected
-             :documentation "A short description of what the grammar expected there.")))
+             :documentation "A short description of what the grammar expected there."))
+  (:report (lambda (c s)
+             (format s "chord-symbol-parse-error~@[ ~S~]~@[ at ~D~]~@[: expected ~A~]~@[ (~A)~]"
+                     (music-theory-error-text c)
+                     (chord-symbol-parse-error-position c)
+                     (chord-symbol-parse-error-expected c)
+                     (music-theory-error-reason c)))))
 
 (define-condition music-theory-warning (warning) ())
 
 (define-condition unknown-chord-quality (music-theory-warning)
-  ((text :initarg :text :initform nil :reader unknown-chord-quality-text)))
+  ((text :initarg :text :initform nil :reader unknown-chord-quality-text
+         :documentation "The unknown quality word, e.g. \"dom7\"."))
+  (:report (lambda (c s)
+             (format s "unknown chord quality ~S" (unknown-chord-quality-text c)))))
 
 (define-condition ambiguous-spelling (music-theory-warning)
   ((midi :initarg :midi :reader ambiguous-spelling-midi)

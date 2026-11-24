@@ -24,3 +24,26 @@ Each `mt2-roman.sexp` row gives our text, the music21 figure that names the same
 - **Text.** Key names print an uppercase tonic (`F# minor`, where music21 prints `f# minor`). ASCII Roman numerals print `o` and `/o` (RomanText style), Unicode `°` and `ø`; music21 prints `o` and `ø`.
 
 Hand-written rows in `tests/mt2-test.lisp` were cross-checked against an independent reference implementation of the rules in `src/key.lisp` and `src/roman.lisp`, and, where music21 can express them (theoretical-key scales, applied chords, literal readings, mixture), against music21.
+
+| `mt3-symbols.sexp` | computed with music21 (`harmony.ChordSymbol` from a per-row recipe: a music21 figure, or `ChordSymbol(root=, kind=)` plus `ChordStepModification`s; `NoChord` for N.C.): root, bass, spelled tones without the bass; and music21's own reading of our text, for reference | music21 10.5.2 | MIT (generated facts) | `uv run --with music21==10.5.2 python -I tests/fixtures/generate-mt3.py` |
+| `mt3-kinds.sexp` | computed with music21 (`ChordSymbol(root=, kind=)` for every MusicXML 4.0 `<kind>` on five roots) | music21 10.5.2 | MIT (generated facts) | same script |
+| `mt3-transpose.sexp` | computed with music21 (`ChordSymbol.transpose` by eight intervals and by the interval between two keys' tonics) | music21 10.5.2 | MIT (generated facts) | same script |
+
+## MT3: where our conventions differ from music21
+
+music21's chord-symbol parser reads another text convention, so each `mt3-symbols.sexp` row names its chord with a recipe in music21's own terms, and music21 realises the recipe. The last column, `m21-direct`, is what music21's parser makes of our text when only the root and bass accidentals are translated into its notation. The generator stops when that reading is a different chord on a row not listed below. Rows where it is an error are expected: music21 has no reading for the notation.
+
+- **`-` is minor, never a flat** (as in `parse-pitch`). music21 reads `-` as a flat, so its `C-` is C♭ major, `C-7` C♭7, `E-9` E♭9, `C-add9` C♭(add9).
+- **Flats and Unicode.** We read `b`, `bb`, `x` and `♭ ♯ 𝄫 𝄪` in the root, bass and alterations. music21 reads only `-` and `#` in a root (`Bb7` is an error for it), and no Unicode accidental anywhere.
+- **`dim`, `o`, `°` depend on the dialect.** music21 reads `dim` and `o` as the diminished triad, our `:classical` reading; in `:pop` and `:jazz` they are the diminished seventh, so `Cdim` is C E♭ G♭ B𝄫 there. music21 does not read `°` at all.
+- **Words music21 lacks.** We read `Δ △ ^` (major seventh), a bare `ø` or `Ø` (half-diminished seventh), `-Δ`, `mΔ`, `m(maj7)`, `mmaj7`, `+maj7`, `+Δ7`, `maj9`, `maj11`, `maj13`, `Maj`, `mi`, `M6`, `maj6`, `6/9`, `m6/9`, `9sus4`, `13sus4`, `7sus2`, `no3`, `7alt`, `+5`/`-9`-style alterations, parenthesised modifier groups, and `N.C.`/`NC`/`N.C`. music21 signals an error for each.
+- **`7alt`** is our convention: the dominant seventh with ♭9 ♯9 ♯11 ♭13 and no fifth (C E B♭ D♭ D♯ F♯ A♭).
+- **`C69`**: music21 reads it but realises C A D, dropping the third and fifth. Ours is the 6/9 chord C E G A D.
+- **`C13b9`, `C13#11`**: music21 keeps the natural ninth or eleventh, because it ignores an alteration of a degree the kind already has. We alter it: C13♯11 has F♯ and no F.
+- **The fifth folds into the quality.** music21 keeps `Cm7b5` as a minor seventh with an altered fifth, and `C7#5` as a dominant seventh with ♯5. We read them as the half-diminished and augmented sevenths (same pitches). `C7(b5)` and `C7(b5,#5)` do not fold.
+- **Neapolitan.** music21's `Neapolitan` kind realises 1 ♭2 3 ♭5 (C D♭ E G♭), which is not a Neapolitan chord. Our row in `+musicxml-kinds+` is the major triad on its own root; `mt3-kinds.sexp` marks the row `:differs`.
+- **The functional sixths and Tristan follow music21's root convention.** MusicXML gives these kinds no intervals. Like music21, we put the root on the key's tonic, so the Italian sixth of C minor (C F♯ A♭) has the root C.
+- **The slash bass is not a chord tone.** music21's pitches include the bass (`C/F#` is F♯ C E G). Our `chord-tones` gives C E G, and the F♯ is the `bass` slot. The fixture's tones leave the bass out.
+- **`C13` keeps its eleventh** (C E G B♭ D F A), as in music21 and MusicXML's `dominant-13th`. Leaving the eleventh out is a choice of `chord-essential-tones`, from the priority rows.
+
+Hand-written rows in `tests/mt3-test.lisp` were cross-checked against an independent reference implementation of the rules in `src/chord-symbol.lisp` and `src/chord-tones.lisp`. That implementation also realised every fixture row and agreed with music21 on each.
