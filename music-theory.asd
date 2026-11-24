@@ -1,5 +1,5 @@
 (defsystem "music-theory"
-  :version "0.5.1"
+  :version "0.5.2"
   :description "Music theory for cl-stack: spelled pitch, intervals, keys, meter, chord symbols, Roman numerals, spelling and key detection"
   :author "egao1980"
   :license "MIT"
@@ -24,7 +24,7 @@
   :in-order-to ((test-op (test-op "music-theory/tests"))))
 
 (defsystem "music-theory/tests"
-  :depends-on ("music-theory" "rove")
+  :depends-on ("music-theory" (:version "rove" "0.11.1"))
   :pathname "tests"
   :serial t
   :components ((:file "package")
@@ -33,7 +33,8 @@
                (:file "mt2-test")
                (:file "mt3-test")
                (:file "mt4-test")
-               (:file "mt51-test"))
+               (:file "mt51-test")
+               (:file "mt52-test"))
   :perform (test-op (o c)
              (unless (symbol-call :rove :run c)
                (error "tests failed for ~A" (component-name c)))))
