@@ -175,8 +175,6 @@ FAIL never returns."
     ;; Only validated ASCII digits reach PARSE-INTEGER.
     (let ((octave (parse-integer text :start digits :end stop)))
       (when negative (setf octave (- octave)))
-      ;; 0.5.1 contract (music-theory#15): every integer octave is accepted.
-      (unless (<= -1 octave 9) (%mt51-pending '%scan-octave))
       octave)))
 
 (defun parse-pitch (string)

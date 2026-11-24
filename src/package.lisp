@@ -70,9 +70,3 @@ symbols (0.5.1).")
    #:parse-roman #:roman-name #:chord-for #:roman-for #:roman-mixture-p))
 
 (in-package #:music-theory)
-
-(defun %mt51-pending (name)
-  "Contract stub for the 0.5.1 amendment (music-theory#14, #15, #16): NAME is the
-rule or function whose amended behaviour is pending. Every call is replaced by the
-implementation, then this function is deleted."
-  (error "music-theory 0.5.1 pending: ~A" name))

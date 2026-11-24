@@ -192,40 +192,35 @@ else is a TYPE-ERROR); MUFFLE-WARNING, or a handler that declines, keeps HI."
           hi))
       hi))
 
-(defun %spell-choice (midi center positions key-notes before recent next)
+(defun %spell-choice (midi center key-notes before recent next)
   "Rules S0-S7 (file header) for the MIDI number MIDI, the first that applies:
 the line-of-fifths position chosen and the rule's name, as two values. CENTER is the
-note's center c(i), POSITIONS the key's positions K and KEY-NOTES its notes N (S1).
-BEFORE is the note just before,
-(midi . position), or NIL: PREVIOUS for SPELL-MIDI, note i-1 in a sequence. RECENT
-is the position of the latest window note with MIDI's pitch class, or NIL. NEXT is
-the MIDI number of the first note past the run, or NIL (always NIL for SPELL-MIDI).
+note's center c(i) (the mean of K and the window, from %SPELL-NOTES) and KEY-NOTES
+the key's notes N (S1). BEFORE is the note just before, (midi . position), or NIL:
+PREVIOUS for SPELL-MIDI, note i-1 in a sequence. RECENT is the position of the latest
+window note with MIDI's pitch class, or NIL. NEXT is the MIDI number of the first
+note past the run, or NIL (always NIL for SPELL-MIDI).
 S0 is also the run rule: a note with the MIDI number of the note just before it
 belongs to that note's run and takes its spelling, so a run is decided once, at its
-first note. This is the one place that holds the rules."
+first note. S5 decides only from +INTERVAL-RULE-AMBIGUITY+ up. This is the one place
+that holds the rules."
   (let* ((candidates (%candidates midi))
-         (in-key (find-if (lambda (f) (member f positions)) candidates))
+         (in-key (find-if (lambda (f) (member f key-notes)) candidates))
          (lo (find-if (lambda (f) (<= f center)) candidates :from-end t))
-         (hi (find-if (lambda (f) (> f center)) candidates)))
+         (hi (find-if (lambda (f) (> f center)) candidates))
+         (interval-p (and before (>= (%ambiguity midi center) +interval-rule-ambiguity+))))
     (flet ((near-before-p (f)
              (<= (abs (- f (cdr before))) 5)))
       (cond ((and before (= midi (car before))) (values (cdr before) "S0"))
             (in-key (values in-key "S1"))
-            ;; 0.5.1 contract (music-theory#14): S1 keeps a candidate in KEY-NOTES, N.
-            ((find-if (lambda (f) (member f key-notes)) candidates) (%mt51-pending 's1))
             ((null hi) (values lo "S2"))
             ((null lo) (values hi "S2"))
             ((and recent (or (= recent lo) (= recent hi))) (values recent "S3"))
             ((eql next (1+ midi)) (values hi "S4"))
             ((eql next (1- midi)) (values lo "S4"))
-            ;; 0.5.1 contract (music-theory#14): S5 decides only a note whose
-            ;; ambiguity is at least +INTERVAL-RULE-AMBIGUITY+.
-            ((and before (< (%ambiguity midi center) +interval-rule-ambiguity+)
-                  (or (near-before-p lo) (near-before-p hi)))
-             (%mt51-pending 's5))
             ;; HI - LO = 12, so at most one of them lies within 5: "exactly one".
-            ((and before (near-before-p lo)) (values lo "S5"))
-            ((and before (near-before-p hi)) (values hi "S5"))
+            ((and interval-p (near-before-p lo)) (values lo "S5"))
+            ((and interval-p (near-before-p hi)) (values hi "S5"))
             ((< (- center lo) (- hi center)) (values lo "S6"))
             ((> (- center lo) (- hi center)) (values hi "S6"))
             (t (values (%ambiguous-spelling midi lo hi) "S7"))))))
@@ -257,7 +252,7 @@ and so the center and rule S3, and it is the note before the first (S0, S5)."
           for center = (/ (+ key-sum (- (svref sums i) (svref sums start)))
                           (+ key-count (- i start)))
           for position = (%spell-choice
-                          midi center positions key-notes
+                          midi center key-notes
                           (and (plusp i) (cons (svref notes (1- i)) (svref spelled (1- i))))
                           (loop for j from (1- i) downto start
                                 when (= (mod (svref notes j) 12) (mod midi 12))
