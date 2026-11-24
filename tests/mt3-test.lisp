@@ -948,3 +948,69 @@ or whose second printing differs from the first."
     (dolist (text '("C" "Cm7b5(b9)/Gb" "C7alt" "N.C." "C6/9/E" "C5(#9,add#4,add#6,omit5)"))
       (let ((c (cp text :jazz)))
         (ok (equalp c (read-from-string (prin1-to-string c))) text)))))
+
+;;; Amendment music-theory#10: a folded fifth with omit5 ---------------------------
+;;; :POP and :JAZZ print the diminished triad and :POP the half-diminished seventh
+;;; through a fifth alteration ("Cm(b5)", "Cm7(b5)"); without the fifth they print
+;;; "Cm(b5,omit5)", which rule R5's exception now reads back.
+
+(deftest-parametrize parse-folded-fifth-omitted
+    ((text dialect expected)
+     ("Cm(b5,omit5)" :pop '(:root "C" :quality :diminished :omitted (5)))
+     ("Cm(omit5,b5)" :pop '(:root "C" :quality :diminished :omitted (5)))
+     ("Cm(b5,no5)" :pop '(:root "C" :quality :diminished :omitted (5)))
+     ("Cm(b5,omit5)" :classical '(:root "C" :quality :diminished :omitted (5)))
+     ("C-(b5,omit5)" :jazz '(:root "C" :quality :diminished :omitted (5)))
+     ("C°(omit5)" :classical '(:root "C" :quality :diminished :omitted (5)))
+     ("Cm7(b5,omit5)" :pop '(:root "C" :quality :half-diminished-7 :omitted (5)))
+     ("Cm7b5(omit5)" :pop '(:root "C" :quality :half-diminished-7 :omitted (5)))
+     ("C-7(b5,omit5)" :jazz '(:root "C" :quality :half-diminished-7 :omitted (5)))
+     ("Cm9(b5,omit5)" :pop '(:root "C" :quality :half-diminished-7 :extensions (9) :omitted (5)))
+     ("Cm7(b5,b9,omit5)" :pop '(:root "C" :quality :half-diminished-7 :alterations ((9 . -1))
+                                :omitted (5)))
+     ("C(#5,omit5)" :pop '(:root "C" :quality :augmented :omitted (5)))
+     ("C7(#5,omit5)" :pop '(:root "C" :quality :augmented-7 :omitted (5)))
+     ("Cmaj7(#5,omit5)" :pop '(:root "C" :quality :augmented-major-7 :omitted (5)))
+     ("F#m(b5,omit5)/C" :pop '(:root "F#" :quality :diminished :omitted (5) :bass "C")))
+  (let ((c (ignore-errors (cp text dialect))))
+    (ok (same-chord-p (apply #'ch expected) c) (prin1-to-string c))))
+
+(deftest-parametrize parse-folded-fifth-omitted-errors
+    ((text dialect position)
+     ("Cm(b5,#5,omit5)" :pop 9)
+     ("Cm(b5,omit5,#5)" :pop 12)
+     ("Cm(b5,omit5,omit5)" :pop 12)
+     ("C(b5,omit5)" :pop 5)
+     ("C7(b5,omit5)" :pop 6)
+     ("C7#5alt" :jazz 4)
+     ("C7alt(#5)" :jazz 6))
+  (let ((c (parse-failure text dialect)))
+    (ok (typep c 'chord-symbol-parse-error) text)
+    (ok (and c (eql position (chord-symbol-parse-error-position c)))
+        (format nil "~S: position ~S" text (and c (chord-symbol-parse-error-position c))))))
+
+(deftest-parametrize print-folded-fifth-omitted
+    ((text read classical pop jazz)
+     ("C°(omit5)" :classical "C°(omit5)" "Cm(b5,omit5)" "C-(b5,omit5)")
+     ("Cø7(omit5)" :pop "Cø7(omit5)" "Cm7(b5,omit5)" "Cø7(omit5)")
+     ("Cø9(omit5)" :pop "Cø9(omit5)" "Cm9(b5,omit5)" "Cø9(omit5)")
+     ("C+(omit5)" :pop "C+(omit5)" "C+(omit5)" "C+(omit5)")
+     ("Gdim(omit5)/Bb" :classical "G°(omit5)/Bb" "Gm(b5,omit5)/Bb" "G-(b5,omit5)/Bb"))
+  (let ((c (cp text read)))
+    (ok (equal (list classical pop jazz)
+               (mapcar (lambda (d) (print-chord-symbol c :dialect d)) *dialects*)))))
+
+(deftest round-trip-folded-fifth-omitted
+  ;; print → parse → print in every dialect and both styles (music-theory#10).
+  (let ((values (loop for root in '("C" "F#" "Bb")
+                      nconc (list (ch :root root :quality :diminished :omitted '(5))
+                                  (ch :root root :quality :diminished :omitted '(5) :bass "Gb")
+                                  (ch :root root :quality :half-diminished-7 :omitted '(5))
+                                  (ch :root root :quality :half-diminished-7 :extensions '(9) :omitted '(5))
+                                  (ch :root root :quality :half-diminished-7 :alterations '((9 . -1))
+                                      :omitted '(5))
+                                  (ch :root root :quality :augmented :omitted '(5))
+                                  (ch :root root :quality :augmented-7 :omitted '(5))
+                                  (ch :root root :quality :augmented-major-7 :omitted '(5))))))
+    (ok (= 24 (length values)))
+    (ok (null (round-trip-failures values)) (report (round-trip-failures values)))))

@@ -7,6 +7,9 @@
 ;;;;   PARSE-CHORD-SYMBOL (MT3): USE-VALUE and SKIP-CHORD-SYMBOL (returns NIL)
 ;;;;     around CHORD-SYMBOL-PARSE-ERROR; USE-VALUE (a quality keyword) around
 ;;;;     the UNKNOWN-CHORD-QUALITY warning.
+;;;;   SPELL-MIDI, SPELL-SEQUENCE (MT4): AMBIGUOUS-SPELLING is signalled with
+;;;;     SIGNAL (silent unless handled) inside USE-VALUE (a SPELLED-PITCH to use)
+;;;;     and MUFFLE-WARNING (keep the default spelling); see src/spell.lisp.
 
 (in-package #:music-theory)
 
@@ -63,8 +66,16 @@ root-position major or minor triad."))
              (format s "unknown chord quality ~S" (unknown-chord-quality-text c)))))
 
 (define-condition ambiguous-spelling (music-theory-warning)
-  ((midi :initarg :midi :reader ambiguous-spelling-midi)
-   (candidates :initarg :candidates :reader ambiguous-spelling-candidates)))
+  ((midi :initarg :midi :initform nil :reader ambiguous-spelling-midi
+         :documentation "The MIDI number being spelled.")
+   (candidates :initarg :candidates :initform nil :reader ambiguous-spelling-candidates
+               :documentation "The two SPELLED-PITCHes it lies midway between, flatter first."))
+  (:documentation "A note lies midway between two spellings and no rule decides
+(rule S7 in src/spell.lisp). Signalled with SIGNAL, so it is silent unless handled.")
+  (:report (lambda (c s)
+             (format s "ambiguous spelling of MIDI ~D: ~{~A~^ or ~}"
+                     (ambiguous-spelling-midi c)
+                     (mapcar #'pitch-name (ambiguous-spelling-candidates c))))))
 
 (defun skip-chord-symbol (&optional condition)
   "Invoke the SKIP-CHORD-SYMBOL restart (established by PARSE-CHORD-SYMBOL)."
