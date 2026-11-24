@@ -29,13 +29,15 @@
      ("F#4" 3 1 4) ("f#4" 3 1 4) ("Eb4" 2 -1 4) ("E♭4" 2 -1 4) ("C♯4" 0 1 4)
      ("Cx5" 0 2 5) ("C𝄪5" 0 2 5) ("C##5" 0 2 5) ("C♯♯5" 0 2 5)
      ("Bbb3" 6 -2 3) ("B𝄫3" 6 -2 3) ("B♭♭3" 6 -2 3)
-     ("C-1" 0 0 -1) ("B-1" 6 0 -1) ("Cb-1" 0 -1 -1) ("G9" 4 0 9) ("  A4 " 5 0 4))
+     ("C-1" 0 0 -1) ("B-1" 6 0 -1) ("Cb-1" 0 -1 -1) ("G9" 4 0 9) ("  A4 " 5 0 4)
+     ;; 0.5.1 (music-theory#15): any integer octave; these two were rejects.
+     ("C10" 0 0 10) ("C-2" 0 0 -2))
   (ok (equalp (make-spelled-pitch :letter letter :alter alter :octave octave)
               (parse-pitch text))))
 
 (deftest-parametrize parse-pitch-rejects
     ((text)
-     ("") ("H4") ("C") ("C#") ("Cbbb4") ("C#b4") ("4") ("C4x") ("C10") ("C-2")
+     ("") ("H4") ("C") ("C#") ("Cbbb4") ("C#b4") ("4") ("C4x")
      ("Cmaj7") ("C 4") ("#C4"))
   (ok (signals-with-text (lambda () (parse-pitch text)) 'invalid-pitch text)))
 

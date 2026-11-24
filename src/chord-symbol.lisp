@@ -203,6 +203,94 @@
 ;;;;   (parse-chord-symbol (print-chord-symbol c :dialect d :accidentals a) :dialect d)
 ;;;;   is equal to C in every slot but TEXT and DIALECT (which is D); and
 ;;;;   printing that value again gives the same text.
+;;;;
+;;;; MusicXML (0.5.1, music-theory#16). A MusicXML <harmony> is a root, a
+;;;; <kind>, a list of <degree> elements and an optional bass. A DEGREE here is
+;;;; a list (type value alter): TYPE :ADD, :ALTER or :SUBTRACT (<degree-type>),
+;;;; VALUE an integer (<degree-value>), ALTER an integer (<degree-alter>, in
+;;;; semitones). As in MusicXML, an :ADD's ALTER is relative to a dominant
+;;;; chord (M2 P4 P5 M6 m7 M9 P11 M13 above the root, which for 2 4 5 6 9 11 13
+;;;; are the natural intervals of +CHORD-DEGREE-INTERVALS+), an :ALTER's to the
+;;;; kind's own tone, and a :SUBTRACT's ALTER is 0. Lists of degrees are in
+;;;; MusicXML order.
+;;;;
+;;;; CHORD-SYMBOL-MUSICXML-KIND chord → (values kind degrees), for a well-formed
+;;;; CHORD (else MUSIC-THEORY-ERROR as for PRINT-CHORD-SYMBOL; TYPE-ERROR for a
+;;;; non-CHORD-SYMBOL). ROOT and BASS are the chord's own slots.
+;;;;   X1  N.C.: "none" and ().
+;;;;   X2  The kind: the first row of +MUSICXML-KINDS+, in table order, whose
+;;;;       symbol (read with PARSE-CHORD-SYMBOL) has the chord's QUALITY and
+;;;;       EXTENSIONS and no ALTERATIONS, SUSPENSION, ADDED or OMITTED; for
+;;;;       :MAJOR with a SUSPENSION, the row "suspended-second" or
+;;;;       "suspended-fourth", which then writes the suspension. So "major"
+;;;;       (not "Neapolitan") and "power" (not "pedal").
+;;;;       When no row has the chord's QUALITY and EXTENSIONS, the row of
+;;;;       +MUSICXML-STRUCTURAL-DEGREES+ for the QUALITY names a base quality:
+;;;;       the kind is the base quality's with the EXTENSIONS, and the row's
+;;;;       degrees come first. C+M7 is "major-seventh" ((:alter 5 1)), Cø9
+;;;;       "minor-ninth" ((:alter 5 -1)), CmM9 "minor-ninth" ((:alter 7 1)),
+;;;;       C°9 "minor-ninth" ((:alter 5 -1) (:alter 7 -1)), C+9 "dominant-ninth"
+;;;;       ((:alter 5 1)).
+;;;;   X3  Then, in this order: a SUSPENSION the kind does not write, as
+;;;;       (:subtract 3 0) followed by (:add s 0); each ALTERATIONS pair
+;;;;       (d . a), as (:alter d a) when d is 5 or one of the EXTENSIONS (a tone
+;;;;       of the kind), else (:add d a); each ADDED pair (d . a) as (:add d a);
+;;;;       each OMITTED degree d as (:subtract d 0). Each group keeps its slot's
+;;;;       order. C7(b9) is "dominant" ((:add 9 -1)), C13(#11) "dominant-13th"
+;;;;       ((:alter 11 1)), C9(#11) "dominant-ninth" ((:add 11 1)), C7sus4
+;;;;       "dominant" ((:subtract 3 0) (:add 4 0)), C(add4,omit3) "major"
+;;;;       ((:add 4 0) (:subtract 3 0)), C6/9 "major-sixth" ((:add 9 0)).
+;;;;   The functional kinds (Neapolitan, Italian, French, German, Tristan) and
+;;;;   "pedal" are never returned: their symbols give the plain kinds, the
+;;;;   Italian sixth "power" ((:add 4 1) (:add 6 -1) (:subtract 5 0)). "other"
+;;;;   is never returned either.
+;;;;
+;;;; MUSICXML-KIND-CHORD-SYMBOL kind root &key bass degrees → a CHORD-SYMBOL or NIL.
+;;;;   KIND is a string, one of the 33 MusicXML 4.0 values of +MUSICXML-KINDS+
+;;;;   compared with STRING= (case matters: "Neapolitan"). Another string
+;;;;   signals MUSIC-THEORY-ERROR (TEXT = KIND, REASON "not a MusicXML 4.0
+;;;;   kind"), a non-string a TYPE-ERROR. DEGREES that are not a proper list of
+;;;;   degrees (lists (type value alter) of a TYPE :ADD, :ALTER or :SUBTRACT and
+;;;;   two integers) are a TYPE-ERROR. ROOT must be a PITCH-CLASS-NAME and BASS
+;;;;   one or NIL, else TYPE-ERROR, except for "none" and "other", which ignore
+;;;;   them.
+;;;;   Y1  "other" (a harmony spelled by <degree> elements alone, which a
+;;;;       CHORD-SYMBOL cannot hold): NIL, whatever ROOT, BASS and DEGREES are.
+;;;;   Y2  "none": N.C. (MusicXML writes a root even then); DEGREES must be (),
+;;;;       else MUSIC-THEORY-ERROR.
+;;;;   Y3  Otherwise the value starts as the kind's symbol in +MUSICXML-KINDS+
+;;;;       on ROOT, with BASS as its bass.
+;;;;   Y4  Structural degrees: the first row of +MUSICXML-STRUCTURAL-DEGREES+
+;;;;       whose base quality is the kind's quality, whose degrees are all in
+;;;;       DEGREES, and such that DEGREES alter the row's degree values (5, 7)
+;;;;       in no other way: the QUALITY becomes the row's, and those degrees are
+;;;;       used. "minor-13th" ((:alter 7 1) (:alter 5 -1)) is CmM13(b5);
+;;;;       "minor-seventh" ((:alter 5 -1) (:alter 5 1)) keeps both alterations.
+;;;;   Y5  Suspension: in the DEGREES Y4 left, a (:subtract 3 0) followed
+;;;;       directly by (:add 2 0) or (:add 4 0), when the quality has a major
+;;;;       third (+SUSPENDABLE-QUALITIES+), is SUSPENSION 2 or 4; both are used.
+;;;;       In the other order they stay an omission and an addition, which is
+;;;;       how X3 writes C(add4,omit3).
+;;;;   Y6  Every other degree is an item, read as PARSE-CHORD-SYMBOL reads one:
+;;;;       (:alter d a) with (d . a) in +CHORD-ALTERATIONS+ and d 5 or one of
+;;;;       the EXTENSIONS, an alteration; (:add d a) with d an add-degree (2 4
+;;;;       6 9 11 13) and a in -1..1, an addition (a tension pair is an
+;;;;       alteration, as in Cadd#11); (:subtract d 0) with d an omit-degree (3
+;;;;       5 9 11), an omission. Rules R1-R5 hold as when parsing, then the
+;;;;       fold: "dominant" ((:alter 5 1)) is C+7, "minor" ((:alter 5 -1)) the
+;;;;       diminished triad. Any other degree, or one that breaks a rule,
+;;;;       signals MUSIC-THEORY-ERROR (TEXT NIL, with a REASON): (:alter 3 1),
+;;;;       (:add 7 0), (:add 9 2), (:subtract 5 1), (:alter 9 -1) on
+;;;;       "dominant", (:add 9 0) on "dominant-ninth" (R4).
+;;;;   The value is well formed, with TEXT and DIALECT NIL. ALTERATIONS, ADDED
+;;;;   and OMITTED are sorted as the parser sorts them.
+;;;; Properties: for every well-formed chord C,
+;;;;   (multiple-value-bind (kind degrees) (chord-symbol-musicxml-kind c)
+;;;;     (musicxml-kind-chord-symbol kind (chord-symbol-root c)
+;;;;                                 :bass (chord-symbol-bass c) :degrees degrees))
+;;;; is equal to C in every slot but TEXT and DIALECT; and for each of the 25
+;;;; kinds X2 returns and every ROOT, CHORD-SYMBOL-MUSICXML-KIND of
+;;;; (musicxml-kind-chord-symbol kind root) is that kind and ().
 
 (in-package #:music-theory)
 
@@ -351,6 +439,18 @@ the key); Italian, French and German follow music21's convention, the root
 being the key's tonic (C F# Ab is the Italian sixth of C minor); Tristan is A4,
 A6 and A9 above the root; pedal is the root alone. \"other\" (a harmony made of
 <degree> additions only) has no symbol: NIL. \"none\" is N.C. Data.")
+
+(defparameter +musicxml-structural-degrees+
+  '((:diminished-7 :minor-7 ((:alter 5 -1) (:alter 7 -1)))
+    (:minor-major-7 :minor-7 ((:alter 7 1)))
+    (:half-diminished-7 :minor-7 ((:alter 5 -1)))
+    (:augmented-7 :dominant-7 ((:alter 5 1)))
+    (:augmented-major-7 :major-7 ((:alter 5 1))))
+  "(quality base-quality degrees): a seventh quality written in MusicXML as the
+kind of BASE-QUALITY (with the chord's EXTENSIONS) and these <degree> alterations,
+for the chords no kind names (C+M7, and the four with EXTENSIONS: C+9, Cø9, CmM9,
+C°9). Read in order (rules X2 and Y4 in the file header). Data (0.5.1,
+music-theory#16).")
 
 ;;; Derived tables ------------------------------------------------------------
 
@@ -878,3 +978,17 @@ not well formed."
                   (chord-symbol-suspension chord)
                   (%group-text alterations added omitted accidentals)
                   (and bass (pitch-class-string bass :accidentals accidentals)))))))
+
+;;; MusicXML <kind> ---------------------------------------------------------------
+
+(defun chord-symbol-musicxml-kind (chord)
+  "The MusicXML 4.0 <kind> value and the <degree> list (type value alter) that
+write CHORD, as two values (rules X1-X3 in the file header)."
+  (declare (ignorable chord))
+  (%mt51-pending 'chord-symbol-musicxml-kind))
+
+(defun musicxml-kind-chord-symbol (kind root &key bass degrees)
+  "The CHORD-SYMBOL a MusicXML <harmony> of KIND on ROOT with BASS and DEGREES
+writes, or NIL for \"other\" (rules Y1-Y6 in the file header)."
+  (declare (ignorable kind root bass degrees))
+  (%mt51-pending 'musicxml-kind-chord-symbol))

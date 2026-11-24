@@ -53,6 +53,7 @@ Hand-written rows in `tests/mt3-test.lisp` were cross-checked against an indepen
 | `mt4-histograms.sexp` | the same three analyses on nine synthetic pitch-class histograms | music21 10.5.2 | MIT (generated facts) | same script |
 | `mt4-profiles.sexp` | music21's `getWeights` for the three profiles, as exact rationals of its decimals | music21 10.5.2 | MIT (published numbers, see below) | same script |
 | `mt4-transposed.sexp` | computed with music21 (`Stream.transpose`) for every melody, to the keys five fifths above and below its own | music21 10.5.2 | MIT (generated facts) | same script |
+| `mt51-chromatic.sexp` | 57 chromatic lines from public-domain works, re-encoded by us (the note lists live in `generate-mt51.py`), 8 of them copies in remote keys; music21 checks every spelling, gives the MIDI numbers and transposes the copies | music21 10.5.2 | MIT (our encodings of public-domain works; generated facts) | `uv run --with music21==10.5.2 python -I tests/fixtures/generate-mt51.py` |
 
 ## MT4: the melodies
 
@@ -109,3 +110,106 @@ Key detection, top-1 and top-2 over the 50 melodies (a key counts when tonic pit
 - **Global state.** Parsimony lives in a closure over one hash table, and `interval-quality` memoizes into a global hash table keyed by fresh `note` instances, which grows with every call. Neither is reentrant or thread-safe, and the library uses single floats and CLOS objects, where this repo uses immutable structs and exact numbers.
 
 Its tunable penalties therefore cannot express key-aware spelling unmodified, so MT4 specifies its own line-of-fifths rules and imports nothing. Its ideas remain as rules S3 (parsimony: a chromatic note keeps its accidental), S4 (direction: a semitone resolution is diatonic) and S5 (no augmented or diminished interval with the note before).
+
+## 0.5.1: chromatic lines (music-theory#14)
+
+In 0.5.0 a chromatic semitone step was spelled as a diatonic semitone even when that put a letter far outside the key: G minor 55 54 53 52 gave G3 F#3 F3 Fb3, D major 62 61 60 gave D4 C#4 B#3. The 50 melodies have no line of that kind. `mt51-chromatic.sexp` is a corpus of such lines, with the composer's spelling as the ground truth.
+
+**Sources.** Three kinds, all public domain:
+
+- *Famous passages*, typed from the scores: the lament grounds of Purcell (*Dido and Aeneas*, "When I am laid in earth"), Bach (Crucifixus of the B minor Mass, Cantata BWV 12) and Beethoven (32 Variations WoO 80), the opening of Bach's royal theme (*Musical Offering*), the opening of Bizet's Habanera, and the first two phrases of the *Tristan* Prelude (cellos and oboe separately). Of the Crucifixus, BWV 12 and WoO 80 grounds only the chromatic fourth is encoded.
+- *Bach chorale excerpts*, chosen by a fixed rule so that the corpus is not picked by the result. A search of the Bach chorales in music21's corpus (one voice at a time, repeated notes merged) listed every run of two or more semitone steps in one direction, three notes either side, and every chromatic neighbour (a note a semitone from the notes either side of it and outside the key's natural, harmonic and melodic scales), four notes either side. By BWV number, the lines are: the first five runs in major through ^4 ♯4 ^5 and the first five through ^1 ^7 ♭7; the first six minor-key runs ascending through both the 6th and the 7th degree; every descending one (eight); every other descending run of three or more semitones in minor (nine, "lament"); and the first three neighbours in major and in minor. Score variants (`-sc`, `-inst`) and an excerpt that doubles one already taken (BWV 8.6's continuo) are left out. The key is the chorale's. `generate-mt51.py --search` prints what the search finds. Only the pitch names of a few notes of Bach's score are used, typed into `generate-mt51.py`; nothing of an encoding is copied (see MT4: the melodies, on why music21's corpus cannot be a source of encodings).
+- *Remote keys*: four minor lines moved to E♭ minor and four major lines to F♯ major by music21's exact transposition (the interval from tonic to tonic, the letter moving at most three steps, as for `mt4-transposed.sexp`).
+
+Each line, its source and its notated spelling (the last column lists the notes the amended rules spell otherwise, notated → spelled):
+
+| id | key | source | notated spelling | misses (0.5.1 rules) |
+|----|-----|--------|------------------|------------------|
+| `purcell-laid-in-earth` | G minor | Purcell, Dido and Aeneas (1689), 'When I am laid in earth', ground bass | G3 F#3 F3 E3 Eb3 D3 Bb2 C3 D3 G2 |  |
+| `bach-crucifixus` | E minor | Bach, Mass in B minor BWV 232, Crucifixus, ground bass (chromatic fourth) | E3 D#3 D3 C#3 C3 B2 |  |
+| `bach-weinen-klagen` | F minor | Bach, Cantata BWV 12 (1714), 'Weinen, Klagen, Sorgen, Zagen', ground bass (chromatic fourth) | F3 E3 Eb3 D3 Db3 C3 |  |
+| `beethoven-woo80` | C minor | Beethoven, 32 Variations in C minor WoO 80 (1806), theme, bass | C3 B2 Bb2 A2 Ab2 G2 |  |
+| `bach-royal-theme` | C minor | Bach, Musical Offering BWV 1079 (1747), the royal theme, opening | C4 Eb4 G4 Ab4 B3 G4 F#4 F4 E4 Eb4 D4 | F#4 → Gb4, E4 → Fb4 |
+| `bizet-habanera` | D minor | Bizet, Carmen (1875), Habanera, 'L'amour est un oiseau rebelle', opening | D5 C#5 C5 B4 Bb4 A4 |  |
+| `wagner-tristan-cello-1` | A minor | Wagner, Tristan und Isolde (1865), Prelude, bars 1-2, cellos | A3 F4 E4 D#4 |  |
+| `wagner-tristan-oboe-1` | A minor | Wagner, Tristan und Isolde, Prelude, bars 2-3, oboe | G#4 A4 A#4 B4 |  |
+| `wagner-tristan-cello-2` | A minor | Wagner, Tristan und Isolde, Prelude, bars 5-6, cellos | C4 Ab4 G4 F#4 | Ab4 → G#4 |
+| `wagner-tristan-oboe-2` | A minor | Wagner, Tristan und Isolde, Prelude, bars 6-7, oboe | B4 C5 C#5 D5 |  |
+| `bwv8.6-bass-m15` | E major | Bach, chorale BWV 8.6, bass, m. 15 | G#3 D#3 E3 A2 A#2 B2 E3 |  |
+| `bwv12.7-bass-m9` | Bb major | Bach, chorale BWV 12.7, bass, m. 9 | F3 Bb2 Bb3 Eb3 E3 F3 Eb3 D3 Eb3 |  |
+| `bwv17.7-bass-m31` | A major | Bach, chorale BWV 17.7, bass, m. 31 | F#3 E3 B2 C#3 D3 D#3 E3 E#3 F#3 G#3 A3 E3 |  |
+| `bwv24.6-bass-m13` | F major | Bach, chorale BWV 24.6, bass, m. 13 | E3 D3 C3 Bb2 B2 C3 F3 |  |
+| `bwv25.6-bass-m9` | C major | Bach, chorale BWV 25.6, bass, m. 9 | C4 C3 D3 E3 F3 F#3 G3 G#3 A3 G3 C3 D3 |  |
+| `bwv20.11-bass-m6` | F major | Bach, chorale BWV 20.11, bass, m. 6 | Bb2 C3 F2 F3 E3 Eb3 D3 C#3 D3 G2 A2 |  |
+| `bwv41.6-continuo-m1` | C major | Bach, chorale BWV 41.6, continuo, m. 1 | C3 C4 B3 Bb3 A3 G3 F3 Bb3 |  |
+| `bwv60.5-bass-m6` | A major | Bach, chorale BWV 60.5, bass, m. 6 | B3 B2 E3 A3 G#3 G3 F#3 B2 E3 F#3 |  |
+| `bwv60.5-bass-m15` | A major | Bach, chorale BWV 60.5, bass, m. 15 | A3 A2 E3 A3 G#3 G3 F#3 F3 E3 D#3 E3 G#3 A3 |  |
+| `bwv127.5-alto-m10` | F major | Bach, chorale BWV 127.5, alto, m. 10 | Eb4 D4 E4 F4 E4 Eb4 D4 Eb4 F4 Eb4 |  |
+| `bwv40.6-bass-m13` | D minor | Bach, chorale BWV 40.6, bass, m. 13 | A2 Bb2 A2 B2 C3 C#3 D3 G2 G3 F3 |  |
+| `bwv108.6-bass-m12` | B minor | Bach, chorale BWV 108.6, bass, m. 12 | D3 D#3 E3 F#3 G3 G#3 A3 A#3 B3 G3 E3 C#3 |  |
+| `bwv153.1-bass-m9` | E minor | Bach, chorale BWV 153.1, bass, m. 9 | F3 E3 D3 C#3 D3 D#3 E3 |  |
+| `bwv153.5-bass-m11` | A minor | Bach, chorale BWV 153.5, bass, m. 11 | C3 D3 E3 F#3 G3 G#3 A3 E3 |  |
+| `bwv161.6-alto-m9` | A minor | Bach, chorale BWV 161.6, alto, m. 9 | E4 D4 E4 F#4 G4 G#4 A4 A3 E4 C#4 |  |
+| `bwv161.6-bass-m11` | A minor | Bach, chorale BWV 161.6, bass, m. 11 | D3 A2 G2 F2 F#2 G2 G#2 A2 E2 |  |
+| `bwv120.6-tenor-m2` | B minor | Bach, chorale BWV 120.6, tenor, m. 2 | F#4 C#4 D#4 E4 D#4 D4 C#4 B3 A3 D4 |  |
+| `bwv245.15-alto-m7` | A minor | Bach, chorale BWV 245.15, alto, m. 7 | D4 C#4 D4 E4 Eb4 D4 C#4 D4 E4 F#4 |  |
+| `bwv245.17-tenor-m7` | A minor | Bach, chorale BWV 245.17, tenor, m. 7 | E4 F#4 E4 C4 B3 Bb3 A3 C4 B3 A3 |  |
+| `bwv278-alto-m7` | E minor | Bach, chorale BWV 278, alto, m. 7 | A4 B4 G#4 C#5 C5 B4 A#4 F#4 G4 F#4 |  |
+| `bwv289-bass-m5` | E minor | Bach, chorale BWV 289, bass, m. 5 | E2 E3 A2 A3 G#3 G3 F#3 E3 F#3 B2 | G#3 → Ab3 |
+| `bwv295-alto-m4` | D minor | Bach, chorale BWV 295, alto, m. 4 | G4 F#4 G4 F4 E4 Eb4 D4 E4 F4 G4 |  |
+| `bwv311-tenor-m5` | B minor | Bach, chorale BWV 311, tenor, m. 5 | E4 A3 B3 C4 B3 A#3 A3 B3 A3 G3 |  |
+| `bwv328-alto-m33` | A minor | Bach, chorale BWV 328, alto, m. 33 | E4 F4 E4 D4 C#4 C4 B3 C4 D4 E4 | C#4 → Db4 |
+| `bwv421-tenor-m1` | A minor | Bach, chorale BWV 421, tenor, m. 1 | D4 E4 A3 B3 Bb3 A3 G#3 A3 C4 B3 |  |
+| `bwv144.6-bass-m8` | B minor | Bach, chorale BWV 144.6, bass, m. 8 | B2 E3 A2 A3 G#3 G3 F#3 E3 D3 C#3 |  |
+| `bwv168.6-alto-m4` | B minor | Bach, chorale BWV 168.6, alto, m. 4 | F#4 C#5 A#4 B4 A#4 A4 G#4 A4 B4 A4 |  |
+| `bwv244.25-bass-m11` | B minor | Bach, chorale BWV 244.25, bass, m. 11 | D3 F#3 G#3 A3 G#3 G3 F#3 E#3 F#3 B2 |  |
+| `bwv288-bass-m5` | A minor | Bach, chorale BWV 288, bass, m. 5 | A2 D3 D4 G#3 G3 F#3 F3 E3 D3 E3 A2 |  |
+| `bwv312-alto-m9` | A minor | Bach, chorale BWV 312, alto, m. 9 | D4 C4 E4 A4 G#4 G4 F#4 G4 F4 E4 |  |
+| `bwv331-bass-m1` | A minor | Bach, chorale BWV 331, bass, m. 1 | A2 A3 G3 F#3 F3 E3 F3 D3 E3 |  |
+| `bwv337-alto-m4` | A minor | Bach, chorale BWV 337, alto, m. 4 | E4 F#4 G#4 A4 G#4 G4 F#4 G4 A4 G4 |  |
+| `bwv434-bass-m3` | A minor | Bach, chorale BWV 434, bass, m. 3 | E3 A3 B3 A3 G#3 G3 F#3 F3 E3 D#3 E3 A2 E3 |  |
+| `bwv3.6-alto-m2` | A major | Bach, chorale BWV 3.6, alto, m. 2 | D4 C#4 B3 E4 D#4 E4 F#4 D#4 |  |
+| `bwv8.6-soprano-m5` | E major | Bach, chorale BWV 8.6, soprano, m. 5 | B4 A#4 F#4 B4 A#4 B4 A#4 B4 |  |
+| `bwv9.7-soprano-m1` | E major | Bach, chorale BWV 9.7, soprano, m. 1 | B4 C#5 D5 C#5 B4 A4 |  |
+| `bwv2.6-soprano-m8` | D minor | Bach, chorale BWV 2.6, soprano, m. 8 | Bb4 A4 Bb4 G4 F#4 G4 D5 Bb4 |  |
+| `bwv4.8-soprano-m1` | E minor | Bach, chorale BWV 4.8, soprano, m. 1 | A4 G#4 A4 B4 C5 |  |
+| `bwv7.7-alto-m3` | B minor | Bach, chorale BWV 7.7, alto, m. 3 | F#4 G4 F#4 E4 D#4 E4 D#4 B3 |  |
+| `purcell-laid-in-earth-in-eb-minor` | Eb minor | `purcell-laid` moved to Eb minor (music21 transposition) | Eb3 D3 Db3 C3 Cb3 Bb2 Gb2 Ab2 Bb2 Eb2 |  |
+| `bach-crucifixus-in-eb-minor` | Eb minor | `bach-crucifixus` moved to Eb minor (music21 transposition) | Eb3 D3 Db3 C3 Cb3 Bb2 |  |
+| `bach-royal-theme-in-eb-minor` | Eb minor | `bach-royal-theme` moved to Eb minor (music21 transposition) | Eb4 Gb4 Bb4 Cb5 D4 Bb4 A4 Ab4 G4 Gb4 F4 | A4 → Bbb4, G4 → Abb4 |
+| `bizet-habanera-in-eb-minor` | Eb minor | `bizet-habanera` moved to Eb minor (music21 transposition) | Eb5 D5 Db5 C5 Cb5 Bb4 |  |
+| `bwv20.11-bass-m6-in-fsharp-major` | F# major | `bwv20.11-bass-m6` moved to F# major (music21 transposition) | B2 C#3 F#2 F#3 E#3 E3 D#3 C##3 D#3 G#2 A#2 |  |
+| `bwv24.6-bass-m13-in-fsharp-major` | F# major | `bwv24.6-bass-m13` moved to F# major (music21 transposition) | E#3 D#3 C#3 B2 B#2 C#3 F#3 |  |
+| `bwv41.6-continuo-m1-in-fsharp-major` | F# major | `bwv41.6-continuo-m1` moved to F# major (music21 transposition) | F#3 F#4 E#4 E4 D#4 C#4 B3 E4 |  |
+| `bwv127.5-alto-m10-in-fsharp-major` | F# major | `bwv127.5-alto-m10` moved to F# major (music21 transposition) | E4 D#4 E#4 F#4 E#4 E4 D#4 E4 F#4 E4 |  |
+
+**Choosing the amendment.** Every direction of music-theory#14 was measured with a throwaway reference implementation of the rules (exact rationals, outside `src/`), which reproduces every MT4 row (33 `spell-midi` rows and 24 `spell-sequence` rows, ambiguities included), the S7 assertions and the 1699/1699, 1699/1699 and 3398/3398 of the 50 melodies before any change. Against the constraints (all of those kept, and the header's examples), with the seven rows of the issue and this corpus with the key:
+
+| Rules | MT4 rows and corpus | issue rows | chromatic lines, with the key |
+|-------|---------------------|-----------:|------------------------------:|
+| 0.5.0 | kept | 0/7 | 477/501 = 95.21% |
+| S5 accepts the augmented unison | breaks `(61 "C major" "C4")` (Db4 → C#4) and the Hall of the Mountain King (E♯ after F♯, 1697/1699 and 3394/3398) | 2/7 | 475/501 = 94.81% |
+| S1 keeps N (natural, harmonic and melodic minor) | kept | 5/7 | 494/501 = 98.60% |
+| N, and S5 accepts the augmented unison | the same two breaks | 7/7 | 493/501 = 98.40% |
+| N, and the center over N too | 8 rows change their ambiguity | 7/7 | 494/501 |
+| no N; S4 and S5 only for ambiguity ≥ 11/16 | kept, but only at exactly 11/16: three S4 rows sit at 11/16, the D major row at 37/54 | 7/7 | 494/501 |
+| **N, and S5 only for ambiguity ≥ 3/4 (0.5.1)** | **kept** | **7/7** | **494/501 = 98.60%** |
+
+The minor rows of the issue need the melodic and natural forms in S1; the two major rows end on the chromatic note, so no S4 applies, and S5 chose the note five fifths outside the key. Bounding S5 by the ambiguity it already measures keeps every row: S5's own rows lie at 37/48 and above (E♭4 then 66 in C major is the lowest), the major rows at 37/54, and `spell-midi`'s version of them (C♯4 then 60 in D major) at 35/48; 3/4 lies between. The center stays the mean of K, so no ambiguity of 0.5.0 changes.
+
+**Figures** for the 0.5.1 rules (reference implementation):
+
+| Set | 0.5.1 | 0.5.0 | music21 `simplifyMultipleEnharmonics`, windows of 8 |
+|-----|------:|------:|------:|
+| chromatic lines, with the key | 494/501 = 98.60% (52 of 57 lines exact) | 477/501 = 95.21% (35 lines) | 474/501 = 94.61% |
+| chromatic lines, without a key | 468/501 = 93.41% (36 lines) | 457/501 = 91.22% (32 lines) | 471/501 = 94.01% |
+| the 50 melodies, with the key | 1699/1699 | 1699/1699 | 98.35% |
+| the 50 melodies, without a key | 1699/1699 | 1699/1699 | 94.23% |
+| the 100 transposed melodies, with the key | 3398/3398 | 3398/3398 | 97.85% |
+| every Bach chorale excerpt the search found (483 lines, 4482 notes), with the key | 4404/4482 = 98.26% (414 lines) | 4297/4482 = 95.87% (329 lines) | — |
+
+`spell-sequence-chromatic-accuracy` asserts the first two rows rounded down: 98% and 93%. The seven misses with the key are chromatic notes of descending lines that Bach spells as the leading tone of the note before (the royal theme's F♯ and E, BWV 289's G♯, BWV 328's C♯), where S4 writes the step as a diatonic semitone; the royal theme's two repeat in its E♭ minor copy; and the A♭ of the second Tristan phrase, which S1 spells G♯ in A minor. They are left for a later change of S4. The rows of `spell-sequence-chromatic-rows` and `spell-midi-amended-rows` are the issue's table and more of the same, computed with the reference implementation.
+
+## 0.5.1: octaves in text (music-theory#15) and MusicXML kinds (music-theory#16)
+
+No new fixture. The rows in `tests/mt51-test.lisp` were computed with independent reference implementations of the amended rules. For music-theory#16 that implementation turned every well-formed chord of an enumeration (each quality with each allowed EXTENSIONS, SUSPENSION, set of ALTERATIONS, up to two ADDED pairs and set of OMITTED degrees: 336,176 chords) into a kind and degrees and back, unchanged; the test does the same for the 981 chords of `mt3-symbols.sexp` on five roots. MusicXML's own `<degree-alter>` convention (an added degree relative to a dominant chord, an altered one relative to the kind) is followed.
