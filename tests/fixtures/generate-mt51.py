@@ -14,11 +14,12 @@ excerpt of one voice; repeated notes are written once, rests and durations are
 left out (they change no spelling). Each row names its source (PROVENANCE.md
 has the details):
   - famous passages typed from the scores (Purcell, Bach, Beethoven, Wagner, Bizet);
-  - excerpts of Bach's four-part chorales. They were located by a search of the
-    chorale scores in music21's corpus for chromatic semitone runs and
-    neighbours, chosen by a fixed rule (below), and typed here from those
-    scores. Only the pitch names of a few notes of Bach's score are used; no
-    encoding is copied. The key is the chorale's.
+  - excerpts of J. S. Bach's four-part chorale harmonisations (public domain),
+    as pitch names retyped here in our own format. music21's corpus was used
+    only to locate the passages (a search for chromatic semitone runs and
+    neighbours, chosen by a fixed rule, below) and to cross-check their
+    spellings; no music21 corpus file or encoding is copied. The key is the
+    chorale's.
   - copies of some lines in remote keys (F# major, Eb minor), spelled by
     music21's exact transposition, as in mt4-transposed.sexp.
 music21 (BSD-3-Clause) checks every spelling and gives the MIDI numbers.
