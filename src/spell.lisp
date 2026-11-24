@@ -95,13 +95,156 @@ the tonic: the major scale, and the harmonic minor scale (raised seventh). Data.
   "The key SPELL-MIDI uses without a KEY, and SPELL-SEQUENCE when it has no KEY and
 DETECT-KEY returns NIL (KEY-NAME text). Data.")
 
+;;; Kernel: exact positions on the line of fifths ---------------------------------
+
+(defun %midi-list-p (object)
+  "True for a proper list of MIDI numbers 0..127."
+  (do ((tail object (rest tail)))
+      ((atom tail) (null tail))
+    (unless (typep (first tail) '(integer 0 127))
+      (return nil))))
+
+(defun %candidates (midi)
+  "The line-of-fifths positions of MIDI's spellings, ascending: the f in -15..19 with
+7f ≡ MIDI (mod 12), two or three, 12 apart."
+  (loop for f from (- (mod (+ (* 7 midi) 15) 12) 15) to 19 by 12
+        collect f))
+
+(defun %position-pitch (fifths midi)
+  "The SPELLED-PITCH at line-of-fifths position FIFTHS whose PITCH-MIDI is MIDI:
+(12 60) is B#3, (-7 71) Cb5."
+  (let* ((class (fifths-pitch-class fifths))
+         (letter (pitch-class-name-letter class))
+         (alter (pitch-class-name-alter class)))
+    (make-spelled-pitch :letter letter :alter alter
+                        :octave (1- (floor (- midi (aref +letter-semitones+ letter) alter) 12)))))
+
+(defun %key-positions (key)
+  "K: the line-of-fifths positions of KEY's notes, a fresh list (+KEY-POSITIONS+)."
+  (let ((tonic (pitch-fifths (key-tonic key))))
+    (mapcar (lambda (offset) (+ tonic offset))
+            (rest (assoc (key-mode key) +key-positions+)))))
+
+(defun %ambiguity (midi center)
+  "d/6, d the distance from CENTER to the nearest integer f with 7f ≡ MIDI (mod 12)."
+  (let ((r (mod (- center (mod (* 7 midi) 12)) 12)))
+    (/ (min r (- 12 r)) 6)))
+
+(defun %ambiguous-spelling (midi lo hi)
+  "Rule S7: signal AMBIGUOUS-SPELLING for MIDI, midway between the positions LO and HI,
+and return the position chosen. USE-VALUE takes a SPELLED-PITCH of MIDI (anything
+else is a TYPE-ERROR); MUFFLE-WARNING, or a handler that declines, keeps HI."
+  (or (restart-case
+          ;; A literal SIGNAL form, so both restarts are associated with the condition.
+          (signal 'ambiguous-spelling
+                  :midi midi
+                  :candidates (list (%position-pitch lo midi) (%position-pitch hi midi)))
+        (use-value (value)
+          :report "Spell the note with a SPELLED-PITCH of its MIDI number."
+          :interactive (lambda ()
+                         (format *query-io* "~&Spelled pitch to use: ")
+                         (finish-output *query-io*)
+                         (list (parse-pitch (read-line *query-io*))))
+          (check-type value spelled-pitch)
+          (unless (= midi (pitch-midi value))
+            (error 'type-error :datum (pitch-midi value) :expected-type `(eql ,midi)))
+          (pitch-fifths value))
+        (muffle-warning ()
+          :report "Keep the sharper spelling."
+          hi))
+      hi))
+
+(defun %spell-choice (midi center positions before recent next)
+  "Rules S0-S7 (file header) for the MIDI number MIDI, the first that applies:
+the line-of-fifths position chosen and the rule's name, as two values. CENTER is the
+note's center c(i) and POSITIONS the key's, K. BEFORE is the note just before,
+(midi . position), or NIL: PREVIOUS for SPELL-MIDI, note i-1 in a sequence. RECENT
+is the position of the latest window note with MIDI's pitch class, or NIL. NEXT is
+the MIDI number of the first note past the run, or NIL (always NIL for SPELL-MIDI).
+S0 is also the run rule: a note with the MIDI number of the note just before it
+belongs to that note's run and takes its spelling, so a run is decided once, at its
+first note. This is the one place that holds the rules."
+  (let* ((candidates (%candidates midi))
+         (in-key (find-if (lambda (f) (member f positions)) candidates))
+         (lo (find-if (lambda (f) (<= f center)) candidates :from-end t))
+         (hi (find-if (lambda (f) (> f center)) candidates)))
+    (flet ((near-before-p (f)
+             (<= (abs (- f (cdr before))) 5)))
+      (cond ((and before (= midi (car before))) (values (cdr before) "S0"))
+            (in-key (values in-key "S1"))
+            ((null hi) (values lo "S2"))
+            ((null lo) (values hi "S2"))
+            ((and recent (or (= recent lo) (= recent hi))) (values recent "S3"))
+            ((eql next (1+ midi)) (values hi "S4"))
+            ((eql next (1- midi)) (values lo "S4"))
+            ;; HI - LO = 12, so at most one of them lies within 5: "exactly one".
+            ((and before (near-before-p lo)) (values lo "S5"))
+            ((and before (near-before-p hi)) (values hi "S5"))
+            ((< (- center lo) (- hi center)) (values lo "S6"))
+            ((> (- center lo) (- hi center)) (values hi "S6"))
+            (t (values (%ambiguous-spelling midi lo hi) "S7"))))))
+
+(defun %spell-notes (midis key window &optional seed)
+  "Spell the MIDI numbers MIDIS in KEY with WINDOW notes of context: (values
+positions ambiguities), two fresh lists as long as MIDIS. SEED, (midi . position) or
+NIL, is a note spelled before MIDIS (SPELL-MIDI's PREVIOUS): it enters the window,
+and so the center and rule S3, and it is the note before the first (S0, S5)."
+  (let* ((offset (if seed 1 0))
+         (n (+ offset (length midis)))
+         (notes (make-array n))         ; MIDI numbers, SEED's first
+         (spelled (make-array n))       ; positions, as spelled
+         (sums (make-array (1+ n) :initial-element 0)) ; (svref sums j) = Σ spelled[0..j-1]
+         (positions (%key-positions key))
+         (key-sum (reduce #'+ positions))
+         (key-count (length positions))
+         (chosen '())
+         (ambiguities '()))
+    (when seed
+      (setf (svref notes 0) (car seed)
+            (svref spelled 0) (cdr seed)
+            (svref sums 1) (cdr seed)))
+    (replace notes midis :start1 offset)
+    (loop for i from offset below n
+          for midi = (svref notes i)
+          for start = (max 0 (- i window))
+          for center = (/ (+ key-sum (- (svref sums i) (svref sums start)))
+                          (+ key-count (- i start)))
+          for position = (%spell-choice
+                          midi center positions
+                          (and (plusp i) (cons (svref notes (1- i)) (svref spelled (1- i))))
+                          (loop for j from (1- i) downto start
+                                when (= (mod (svref notes j) 12) (mod midi 12))
+                                  return (svref spelled j))
+                          (loop for j from (1+ i) below n
+                                unless (= midi (svref notes j))
+                                  return (svref notes j)))
+          do (setf (svref spelled i) position
+                   (svref sums (1+ i)) (+ (svref sums i) position))
+             (push position chosen)
+             (push (%ambiguity midi center) ambiguities))
+    (values (nreverse chosen) (nreverse ambiguities))))
+
+;;; Functions ----------------------------------------------------------------------
+
 (defun spell-midi (midi &key key previous)
-  "Spell MIDI in KEY after PREVIOUS (see the file header): (values pitch ambiguity)."
-  (declare (ignorable midi key previous))
-  (%mt4-pending 'spell-midi))
+  "Spell MIDI in KEY after PREVIOUS (see the file header): (values pitch ambiguity).
+The note is spelled as a one-note sequence after PREVIOUS, with a window of one."
+  (check-type midi (integer 0 127))
+  (check-type key (or null key))
+  (check-type previous (or null spelled-pitch))
+  (multiple-value-bind (positions ambiguities)
+      (%spell-notes (list midi) (or key (parse-key +default-spelling-key+)) 1
+                    (and previous (cons (pitch-midi previous) (pitch-fifths previous))))
+    (values (%position-pitch (first positions) midi) (first ambiguities))))
 
 (defun spell-sequence (midis &key key (window 8))
   "Spell the MIDI numbers MIDIS in KEY (or the detected key), WINDOW notes of
 context: (values pitches ambiguities) (see the file header)."
-  (declare (ignorable midis key window))
-  (%mt4-pending 'spell-sequence))
+  (check-type midis (satisfies %midi-list-p) "a proper list of MIDI numbers 0..127")
+  (check-type key (or null key))
+  (check-type window (integer 0 *))
+  (let ((key (or key
+                 (car (first (detect-key (pitch-class-histogram midis :weight :count))))
+                 (parse-key +default-spelling-key+))))
+    (multiple-value-bind (positions ambiguities) (%spell-notes midis key window)
+      (values (mapcar #'%position-pitch positions midis) ambiguities))))

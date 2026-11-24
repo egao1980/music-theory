@@ -67,8 +67,3 @@ detection and transposition to a key (MT4).")
    #:parse-roman #:roman-name #:chord-for #:roman-for #:roman-mixture-p))
 
 (in-package #:music-theory)
-
-(defun %mt4-pending (name)
-  "Contract stub for slice MT4. Every call is replaced by the implementation,
-then this function is deleted."
-  (error "music-theory MT4 pending: ~A" name))

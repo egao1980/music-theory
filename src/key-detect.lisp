@@ -82,14 +82,105 @@ Data.")
   "The 24 keys DETECT-KEY ranks, as KEY-NAME text, in tie order: by tonic pitch
 class, major before minor. Data.")
 
+(defparameter +detect-key-keys+
+  (mapcar #'parse-key +detect-key-candidates+)
+  "The KEYs of +DETECT-KEY-CANDIDATES+, in its order. Derived at load time; shared by
+every ranking, so never mutated (KEYs are read-only).")
+
+;;; Kernel: validation and exact statistics --------------------------------------
+
+(defun %proper-list-p (object)
+  "True for a proper list."
+  (do ((tail object (rest tail)))
+      ((atom tail) (null tail))))
+
+(defun %cells-p (object type)
+  "True for a list or vector of exactly 12 elements of TYPE."
+  (and (or (vectorp object) (%proper-list-p object))
+       (= 12 (length object))
+       (every (lambda (x) (typep x type)) object)))
+
+(defun %histogram-p (object)
+  "True for a DETECT-KEY histogram: a list or vector of 12 non-negative reals."
+  (%cells-p object '(real 0)))
+
+(defun %key-profiles-p (object)
+  "True for a DETECT-KEY PROFILES argument: the name of a +KEY-PROFILES+ row, or a
+list (major minor) of two sequences of 12 reals."
+  (if (symbolp object)
+      (and object (assoc object +key-profiles+) t)
+      (and (%proper-list-p object)
+           (= 2 (length object))
+           (every (lambda (weights) (%cells-p weights 'real)) object))))
+
+(defun %centered (cells)
+  "CELLS, 12 reals taken as RATIONAL, minus their mean: a fresh SIMPLE-VECTOR, and the
+sum of its squares, as two values. Exact."
+  (let* ((centered (map 'simple-vector #'rational cells))
+         (mean (/ (reduce #'+ centered) 12)))
+    (map-into centered (lambda (x) (- x mean)) centered)
+    (values centered (reduce #'+ centered :key (lambda (x) (* x x))))))
+
+(defun %ranks-before-p (a b)
+  "The header's exact ranking of two scored candidates, (key c . v) each: A's r is
+larger than B's when sign(c1)·c1²·v2 > sign(c2)·c2²·v1."
+  (destructuring-bind (c1 . v1) (cdr a)
+    (destructuring-bind (c2 . v2) (cdr b)
+      (> (* (signum c1) c1 c1 v2) (* (signum c2) c2 c2 v1)))))
+
+(defun %correlation (c v histogram-variance)
+  "r = c / sqrt(v · HISTOGRAM-VARIANCE) as a DOUBLE-FLOAT: the exact c²/(v·v_h)
+rounded once, then the IEEE square root, both monotone, so the rounding never
+reorders keys and |r| ≤ 1."
+  (let ((s (sqrt (float (/ (* c c) (* v histogram-variance)) 1d0))))
+    (if (minusp c) (- s) s)))
+
+;;; Functions --------------------------------------------------------------------
+
 (defun pitch-class-histogram (events &key (weight :duration))
   "The 12-cell pitch-class histogram of EVENTS, (pitch . duration) conses or bare
 pitches, weighted by :DURATION or :COUNT (see the file header)."
-  (declare (ignorable events weight))
-  (%mt4-pending 'pitch-class-histogram))
+  (check-type events (satisfies %proper-list-p) "a proper list of events")
+  (check-type weight (member :duration :count))
+  (let ((cells (make-array 12 :initial-element 0)))
+    (dolist (event events cells)
+      (multiple-value-bind (pitch duration)
+          (if (consp event) (values (car event) (cdr event)) (values event 1))
+        (check-type duration (real 0) "a non-negative real duration")
+        (let ((class (etypecase pitch
+                       (integer (mod pitch 12))
+                       ((or spelled-pitch pitch-class-name) (pitch-class pitch)))))
+          (incf (svref cells class) (if (eq weight :count) 1 duration)))))))
 
 (defun detect-key (histogram &key (profiles :krumhansl-kessler))
   "The 24 candidate keys ranked by correlation with PROFILES, best first, as
 (key . correlation) conses; NIL for a constant HISTOGRAM (see the file header)."
-  (declare (ignorable histogram profiles))
-  (%mt4-pending 'detect-key))
+  (check-type histogram (satisfies %histogram-p) "a list or vector of 12 non-negative reals")
+  (check-type profiles (satisfies %key-profiles-p)
+              "a +KEY-PROFILES+ name or a list (major minor) of two sequences of 12 reals")
+  ;; Per mode, (centered-weights . variance).
+  (let ((modes (mapcar (lambda (weights)
+                         (multiple-value-bind (centered variance) (%centered weights)
+                           (cons centered variance)))
+                       (if (symbolp profiles)
+                           (cddr (assoc profiles +key-profiles+))
+                           profiles))))
+    (when (some (lambda (mode) (zerop (cdr mode))) modes)
+      (error 'music-theory-error :reason "constant key profile"))
+    (multiple-value-bind (cells histogram-variance) (%centered histogram)
+      (unless (zerop histogram-variance)
+        (let ((scored                   ; (key c . v), fresh, in candidate order
+                (loop for key in +detect-key-keys+
+                      for tonic = (pitch-class (key-tonic key))
+                      for (weights . variance) = (if (eq (key-mode key) :major)
+                                                     (first modes)
+                                                     (second modes))
+                      collect (list* key
+                                     (loop for i below 12
+                                           sum (* (svref weights (mod (- i tonic) 12))
+                                                  (svref cells i)))
+                                     variance))))
+          (mapcar (lambda (entry)
+                    (destructuring-bind (key c . v) entry
+                      (cons key (%correlation c v histogram-variance))))
+                  (stable-sort scored #'%ranks-before-p)))))))
