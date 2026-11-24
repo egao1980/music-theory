@@ -337,16 +337,520 @@ being the key's tonic (C F# Ab is the Italian sixth of C minor); Tristan is A4,
 A6 and A9 above the root; pedal is the root alone. \"other\" (a harmony made of
 <degree> additions only) has no symbol: NIL. \"none\" is N.C. Data.")
 
+;;; Derived tables ------------------------------------------------------------
+
+(defparameter +chord-dialect-words+
+  (loop for dialect in +chord-print-dialects+
+        collect (cons dialect
+                      (append
+                       (loop for (word quality . plist) in +chord-quality-words+
+                             for dialects = (getf plist :dialects)
+                             when (or (null dialects) (member dialect dialects))
+                               collect (list word quality (getf plist :extensions)
+                                             (getf plist :added)))
+                       (loop for (quality . stems) in +chord-seventh-stems+
+                             nconc (loop for stem in stems
+                                         nconc (loop for (number . extensions)
+                                                       in +chord-extension-numbers+
+                                                     collect (list (concatenate 'string stem number)
+                                                                   quality extensions '())))))))
+  "Per dialect, (word quality extensions added) for every quality word it reads (the
+file header: the rows of +CHORD-QUALITY-WORDS+ for the dialect, then every seventh
+stem with every number), scanned by %LONGEST-TOKEN. Derived at load time.")
+
+(defparameter +chord-quality-degrees+
+  (loop for (quality nil intervals) in +chord-qualities+
+        collect (cons quality (mapcar (lambda (name) (interval-number (parse-interval name)))
+                                      intervals)))
+  "Per quality of +CHORD-QUALITIES+, the degrees of its tones above the root: (3 5 7),
+(3 5 6), (5). The natural degrees of rules R4 and R5. Derived at load time.")
+
+(defparameter +no-chord-tokens+ (mapcar #'list +no-chord-words+)
+  "+NO-CHORD-WORDS+ as an alist for %LONGEST-TOKEN. Derived at load time.")
+
+;;; Reading: tokens -----------------------------------------------------------
+;;;
+;;; One integer cursor moves forward over the original string. Every choice is
+;;; one longest match among a few candidates chosen by the character at the
+;;; cursor; a rejected token is an error, never a retry.
+
+(defun %add-degree-p (degree)
+  "True for an add-degree of the grammar: 2 4 6 9 11 13."
+  (member degree '(2 4 6 9 11 13)))
+
+(defun %omit-degree-p (degree)
+  "True for an omit-degree of the grammar: 3 5 9 11."
+  (member degree '(3 5 9 11)))
+
+(defun %text-at (text string start)
+  "The index after TEXT when STRING holds TEXT at START, else NIL."
+  (let ((stop (+ start (length text))))
+    (and (<= stop (length string))
+         (string= text string :start2 start :end2 stop)
+         stop)))
+
+(defun %digit-end (string start)
+  "The index after the maximal run of ASCII digits at START in STRING."
+  (or (position-if-not #'%ascii-digit-p string :start start) (length string)))
+
+(defun %sign-at (string index)
+  "-1 for a flat (b ♭ -) or 1 for a sharp (# ♯ +) at INDEX in STRING, else NIL."
+  (and (< index (length string))
+       (let ((char (char string index)))
+         (cond ((find char "b♭-") -1)
+               ((find char "#♯+") 1)))))
+
+(defun %scan-degree (string start end)
+  "The degree that STRING[START,END) writes: one or two ASCII digits, no leading zero.
+NIL otherwise, so a long digit run never becomes a bignum."
+  (and (<= 1 (- end start) 2)
+       (char/= #\0 (char string start))
+       (parse-integer string :start start :end end)))
+
+(defun %scan-modifier (string start)
+  "The modifier token at START in STRING, or NIL. A token is (kind start end [arg
+digits]): KIND :ALTERATION (ARG the sign), :RAISED-FIFTH, :ADDITION (ARG the sign or
+0), :OMISSION, :SUSPENSION (ARG 2 or 4) or :ALT; DIGITS is where its digit run starts.
+The token is read first; %TOKEN-ITEM checks its digits afterwards."
+  (let ((sign (%sign-at string start))
+        (stop nil))
+    (cond (sign
+           (let ((end (%digit-end string (1+ start))))
+             (if (and (= end (1+ start)) (char= #\+ (char string start)))
+                 (list :raised-fifth start end)
+                 (list :alteration start end sign (1+ start)))))
+          ((setf stop (%text-at "add" string start))
+           (let* ((add-sign (%sign-at string stop))
+                  (digits (if add-sign (1+ stop) stop)))
+             (list :addition start (%digit-end string digits) (or add-sign 0) digits)))
+          ((setf stop (or (%text-at "omit" string start) (%text-at "no" string start)))
+           (list :omission start (%digit-end string stop) nil stop))
+          ((setf stop (%text-at "sus2" string start)) (list :suspension start stop 2))
+          ((setf stop (%text-at "sus4" string start)) (list :suspension start stop 4))
+          ((setf stop (%text-at "sus" string start)) (list :suspension start stop 4))
+          ((setf stop (%text-at "alt" string start)) (list :alt start stop)))))
+
+(defun %scan-bare-degree (string start)
+  "A group's bare digit run at START in STRING as an :ADD-DEGREE token, or NIL."
+  (and (< start (length string))
+       (%ascii-digit-p (char string start))
+       (list :add-degree start (%digit-end string start) 0 start)))
+
+(defun %token-item (string token)
+  "The item TOKEN reads as, or NIL when its digits are not a degree its kind allows.
+Items: (:SUS degree), (:ALTER (degree . alter)), (:ADD (degree . alter)), (:OMIT
+degree), (:ALT). An addition of a tension pair is an alteration (Cadd#11 = C(#11))."
+  (destructuring-bind (kind start end &optional arg digits) token
+    (declare (ignore start))
+    (let ((degree (and digits (%scan-degree string digits end))))
+      (ecase kind
+        (:alteration
+         (let ((pair (and degree (cons degree arg))))
+           (and pair (member pair +chord-alterations+ :test #'equal) (list :alter pair))))
+        (:raised-fifth (list :alter (cons 5 1)))
+        ((:addition :add-degree)
+         (and degree (%add-degree-p degree)
+              (let ((pair (cons degree arg)))
+                (list (if (member pair +chord-alterations+ :test #'equal) :alter :add)
+                      pair))))
+        (:omission (and degree (%omit-degree-p degree) (list :omit degree)))
+        (:suspension (list :sus arg))
+        (:alt (list :alt))))))
+
+(defun %token-expected (token)
+  "EXPECTED for a TOKEN whose digits are not an allowed degree."
+  (ecase (first token)
+    (:alteration (if (minusp (fourth token)) "a flat 5, 9 or 13" "a sharp 5, 9 or 11"))
+    (:addition "\"add\", an optional flat or sharp, and a degree 2, 4, 6, 9, 11 or 13")
+    (:omission "\"omit\" or \"no\" and a degree 3, 5, 9 or 11")
+    (:add-degree "an added degree 2, 4, 6, 9, 11 or 13")))
+
+;;; Reading: the rules --------------------------------------------------------
+
+(defstruct (%chord-draft (:constructor %make-chord-draft (quality extensions added))
+                         (:conc-name %draft-) (:copier nil) (:predicate nil))
+  "The items of a chord read, or replayed by %CHECK-CHORD-SYMBOL, so far. Internal
+scratch of one call; it never escapes."
+  quality extensions added (suspension nil) (alterations '()) (omitted '()))
+
+(defun %admit-item (draft item)
+  "Add ITEM to DRAFT when rules R1-R6 (file header) allow it, and return NIL.
+Otherwise return the EXPECTED phrase and the rule's name as two values; the caller
+signals, and DRAFT is not used again. The rules are read against DRAFT's QUALITY,
+which is the quality before the fold. Each pairwise rule is checked from both sides,
+so the set of items admitted does not depend on their order. This is the one place
+that holds the rules."
+  (let* ((quality (%draft-quality draft))
+         (natural (cdr (assoc quality +chord-quality-degrees+)))
+         (extensions (%draft-extensions draft))
+         (suspension (%draft-suspension draft))
+         (alterations (%draft-alterations draft))
+         (added (%draft-added draft))
+         (omitted (%draft-omitted draft)))
+    (destructuring-bind (kind &optional arg) item
+      (ecase kind
+        (:sus
+         (cond (suspension (values "one suspension at most" "R1"))
+               ((not (member quality +suspendable-qualities+))
+                (values "a suspension on a major-third quality" "R1"))
+               ((member 3 omitted) (values "a suspension with the 3 not omitted" "R1"))
+               ((assoc arg added) (values "a suspension of a degree that is not added" "R1"))
+               (t (setf (%draft-suspension draft) arg) nil)))
+        (:alter
+         (let ((degree (car arg)))
+           (cond ((and (= degree 5) (not (member quality +perfect-fifth-qualities+)))
+                  (values "an alteration of 5 on a quality with a perfect fifth" "R2"))
+                 ((member arg alterations :test #'equal)
+                  (values "an alteration not already in the chord" "R3"))
+                 ((assoc degree added)
+                  (values "an alteration of a degree that is not added" "R4"))
+                 ((member degree omitted)
+                  (values "an alteration of a degree that is not omitted" "R5"))
+                 (t (push arg (%draft-alterations draft)) nil))))
+        (:add
+         (let ((degree (car arg)))
+           (if (or (member degree natural) (member degree extensions) (eql degree suspension)
+                   (assoc degree alterations) (assoc degree added))
+               (values "an added degree that is not already in the chord" "R4")
+               (progn (push arg (%draft-added draft)) nil))))
+        (:omit
+         (cond ((member arg omitted) (values "a degree not already omitted" "R5"))
+               ((assoc arg alterations) (values "an omitted degree that is not altered" "R5"))
+               ((not (if (member arg '(9 11))
+                         (member arg extensions)
+                         (and (member arg natural) (not (and (= arg 3) suspension)))))
+                (values "an omitted degree that is a natural tone of the chord" "R5"))
+               (t (push arg (%draft-omitted draft)) nil)))
+        (:alt
+         (cond ((not (and (eq quality :dominant-7) (null extensions)))
+                (values "\"alt\" on a dominant seventh with no extensions" "R6"))
+               ((subsetp +altered-dominant+ alterations :test #'equal)
+                (values "\"alt\" once" "R6"))
+               (t
+                ;; Its tones join like any others (R3, R5).
+                (dolist (sub (append (mapcar (lambda (pair) (list :alter pair)) +altered-dominant+)
+                                     (list (list :omit 5)))
+                             nil)
+                  (multiple-value-bind (expected rule) (%admit-item draft sub)
+                    (when expected (return (values expected rule))))))))))))
+
+(defun %pair< (a b)
+  "Order of (degree . alter) pairs: by degree, then by alter."
+  (or (< (car a) (car b))
+      (and (= (car a) (car b)) (< (cdr a) (cdr b)))))
+
+(defun %fold-row (quality alterations)
+  "The +FIFTH-ALTERATION-FOLDS+ row that folds the single alteration of 5 in
+ALTERATIONS into QUALITY, or NIL: no alteration of 5, two of them, or no row
+(C7(b5), C7(b5,#5), C(b5))."
+  (let ((fifths (remove 5 alterations :key #'car :test-not #'eql)))
+    (and fifths (null (rest fifths))
+         (find-if (lambda (row) (and (eq quality (first row)) (equal (first fifths) (second row))))
+                  +fifth-alteration-folds+))))
+
+(defun %draft-chord (draft root bass text dialect)
+  "The CHORD-SYMBOL of a finished DRAFT: the fold, then ALTERATIONS and ADDED sorted
+by degree and alter, OMITTED ascending. Every sort is on a fresh list, so table
+literals are never changed."
+  (let* ((quality (%draft-quality draft))
+         (alterations (%draft-alterations draft))
+         (row (%fold-row quality alterations)))
+    (when row
+      (setf quality (third row)
+            alterations (remove (second row) alterations :test #'equal)))
+    (make-chord-symbol :root root :quality quality :extensions (%draft-extensions draft)
+                       :alterations (sort (copy-list alterations) #'%pair<)
+                       :suspension (%draft-suspension draft)
+                       :added (sort (copy-list (%draft-added draft)) #'%pair<)
+                       :omitted (sort (copy-list (%draft-omitted draft)) #'<)
+                       :bass bass :text text :dialect dialect)))
+
+;;; Reading: conditions -------------------------------------------------------
+
+(defun %chord-parse-failure (string dialect position expected &optional reason)
+  "Signal CHORD-SYMBOL-PARSE-ERROR for STRING at POSITION, inside two restarts
+associated with it: USE-VALUE (its value is returned, unchecked) and
+SKIP-CHORD-SYMBOL (NIL is returned). The interactive USE-VALUE reads a replacement
+text from *QUERY-IO* and parses it in DIALECT."
+  (restart-case (error 'chord-symbol-parse-error :text string :position position
+                                                 :expected expected :reason reason)
+    (use-value (value)
+      :report (lambda (stream)
+                (format stream "Supply a value to return instead of parsing ~S." string))
+      :interactive (lambda ()
+                     (format *query-io* "~&Chord symbol to parse instead: ")
+                     (finish-output *query-io*)
+                     (list (parse-chord-symbol (read-line *query-io*) :dialect dialect)))
+      value)
+    (skip-chord-symbol ()
+      :report (lambda (stream)
+                (format stream "Skip ~S: PARSE-CHORD-SYMBOL returns NIL." string))
+      nil)))
+
+(defun %unknown-chord-quality (run)
+  "Warn UNKNOWN-CHORD-QUALITY (TEXT = RUN) inside a USE-VALUE restart, and return
+the quality to read with: USE-VALUE's (a keyword of +CHORD-QUALITIES+, else
+TYPE-ERROR), or :MAJOR when the warning is not handled or is muffled."
+  (or (restart-case (warn 'unknown-chord-quality :text run)
+        (use-value (quality)
+          :report (lambda (stream)
+                    (format stream "Read ~S as a quality keyword of +CHORD-QUALITIES+." run))
+          :interactive (lambda ()
+                         (format *query-io* "~&Quality keyword: ")
+                         (finish-output *query-io*)
+                         (list (intern (string-upcase (read-line *query-io*)) :keyword)))
+          (unless (assoc quality +chord-qualities+)
+            (error 'type-error :datum quality
+                               :expected-type `(member ,@(mapcar #'first +chord-qualities+))))
+          quality))
+      ;; WARN returns NIL when the warning is not handled, or is muffled.
+      :major))
+
+;;; Well-formed values --------------------------------------------------------
+
+(defun %ranks-ascend-p (list rank)
+  "True when LIST is a proper list whose elements all have an integer RANK (a
+function returning NIL for an element outside the allowed set), strictly
+ascending: sorted and free of repeats."
+  (and (listp list)
+       (null (cdr (last list)))
+       (let ((ranks (mapcar rank list)))
+         (and (every #'integerp ranks)
+              (loop for (a b) on ranks while b always (< a b))))))
+
+(defun %check-chord-symbol (chord)
+  "Signal MUSIC-THEORY-ERROR (TEXT NIL, with a REASON) unless CHORD is a well-formed
+CHORD-SYMBOL (W1-W5 in the file header); TYPE-ERROR for a non-CHORD-SYMBOL. R1-R5 are
+checked by replaying CHORD's items through %ADMIT-ITEM, the parser's own rules, and
+W5 with the parser's own %FOLD-ROW."
+  (check-type chord chord-symbol)
+  (flet ((reject (reason) (error 'music-theory-error :reason reason)))
+    (let ((quality (chord-symbol-quality chord))
+          (extensions (chord-symbol-extensions chord))
+          (suspension (chord-symbol-suspension chord))
+          (alterations (chord-symbol-alterations chord))
+          (added (chord-symbol-added chord))
+          (omitted (chord-symbol-omitted chord)))
+      (cond
+        ((chord-symbol-no-chord-p chord)                                      ; W1
+         (when (or (chord-symbol-root chord) quality suspension (chord-symbol-bass chord)
+                   extensions alterations added omitted)
+           (reject "N.C. has no root, quality, bass or tones")))
+        (t
+         (unless (chord-symbol-root chord)                                    ; W2
+           (reject "a chord has a root"))
+         (unless (assoc quality +chord-qualities+)
+           (reject "the quality is not one of +chord-qualities+"))
+         (unless (member extensions '(() (9) (9 11) (9 11 13)) :test #'equal) ; W3
+           (reject "extensions are (), (9), (9 11) or (9 11 13)"))
+         (when (and extensions (not (assoc quality +chord-seventh-stems+)))
+           (reject "only a seventh quality has extensions"))
+         (unless (%ranks-ascend-p alterations                                 ; W4
+                                  (lambda (pair) (position pair +chord-alterations+ :test #'equal)))
+           (reject "alterations are sorted, distinct pairs of +chord-alterations+"))
+         (unless (%ranks-ascend-p
+                  added
+                  (lambda (pair)
+                    (and (consp pair) (integerp (car pair)) (%add-degree-p (car pair))
+                         (member (cdr pair) '(-1 0 1))
+                         (not (member pair +chord-alterations+ :test #'equal))
+                         ;; Monotone in (degree, alter) for alters -1..1.
+                         (+ (* 3 (car pair)) (cdr pair)))))
+           (reject "added tones are sorted, distinct (degree . alter) pairs of 2 4 6 9 11 13, not tension pairs"))
+         (unless (%ranks-ascend-p omitted (lambda (degree) (position degree '(3 5 9 11))))
+           (reject "omitted degrees are sorted and distinct, of 3 5 9 11"))
+         (let ((draft (%make-chord-draft quality extensions '())))            ; R1-R5
+           (dolist (item (append (and suspension (list (list :sus suspension)))
+                                 (mapcar (lambda (pair) (list :alter pair)) alterations)
+                                 (mapcar (lambda (pair) (list :add pair)) added)
+                                 (mapcar (lambda (degree) (list :omit degree)) omitted)))
+             (multiple-value-bind (expected rule) (%admit-item draft item)
+               (when expected
+                 (reject (format nil "breaks rule ~A: expected ~A" rule expected))))))
+         (when (%fold-row quality alterations)                                ; W5
+           (reject "a single fifth alteration that folds into another quality")))))))
+
+;;; Printing: helpers ---------------------------------------------------------
+
+(defun %print-cell (quality dialect)
+  "QUALITY's cell of +CHORD-PRINT-WORDS+ in DIALECT's column."
+  (nth (1+ (position dialect +chord-print-dialects+)) (assoc quality +chord-print-words+)))
+
+(defun %print-special (dialect quality extensions alterations added omitted)
+  "The first +CHORD-PRINT-SPECIALS+ row for DIALECT whose quality and extensions are
+QUALITY and EXTENSIONS and whose tones are all among ALTERATIONS, ADDED and OMITTED,
+or NIL."
+  (find-if (lambda (row)
+             (destructuring-bind (dialects q e word alt add omit) row
+               (declare (ignore word))
+               (and (member dialect dialects) (eq q quality) (equal e extensions)
+                    (subsetp alt alterations :test #'equal)
+                    (subsetp add added :test #'equal)
+                    (subsetp omit omitted))))
+           +chord-print-specials+))
+
+(defun %print-word (quality extensions dialect)
+  "DIALECT's word for QUALITY: its cell, or for a seventh quality its stem followed by
+the number of EXTENSIONS."
+  (let ((cell (%print-cell quality dialect)))
+    (if (assoc quality +chord-seventh-stems+)
+        (concatenate 'string cell
+                     (car (rassoc extensions +chord-extension-numbers+ :test #'equal)))
+        cell)))
+
+(defun %group-text (alterations added omitted accidentals)
+  "The group: \"(\", the alterations, the added tones and the omitted degrees, joined
+by \",\", then \")\"; \"\" when all three are empty."
+  (let ((items (append (loop for (degree . alter) in alterations
+                             collect (format nil "~A~D" (%accidental-text alter accidentals) degree))
+                       (loop for (degree . alter) in added
+                             collect (format nil "add~A~D" (%accidental-text alter accidentals) degree))
+                       (loop for degree in omitted
+                             collect (format nil "omit~D" degree)))))
+    (if items (format nil "(~{~A~^,~})" items) "")))
+
 ;;; Functions -----------------------------------------------------------------
 
 (defun parse-chord-symbol (string &key (dialect :pop))
   "Parse STRING (see the file header) into a CHORD-SYMBOL read in DIALECT
-(:CLASSICAL, :POP or :JAZZ)."
-  (declare (ignorable string dialect))
-  (%mt3-pending 'parse-chord-symbol))
+(:CLASSICAL, :POP or :JAZZ). Signals CHORD-SYMBOL-PARSE-ERROR (restarts USE-VALUE and
+SKIP-CHORD-SYMBOL) for text outside the grammar or an item that breaks R1-R6, and
+warns UNKNOWN-CHORD-QUALITY (restart USE-VALUE) for an unknown quality."
+  (check-type string string)
+  (check-type dialect (member :classical :pop :jazz))
+  (let ((end (length string))
+        (pos 0)
+        (words (cdr (assoc dialect +chord-dialect-words+)))
+        (draft nil))
+    (labels ((fail (position expected &optional reason)
+               (return-from parse-chord-symbol
+                 (%chord-parse-failure string dialect position expected reason)))
+             (at-p (char)
+               (and (< pos end) (char= char (char string pos))))
+             (skip-space ()
+               (loop while (and (< pos end) (member (char string pos) +pitch-whitespace+))
+                     do (incf pos)))
+             (finish (expected)
+               ;; { space } and the end: space may only end the symbol.
+               (let ((start pos))
+                 (skip-space)
+                 (when (< pos end)
+                   (fail pos (if (> pos start) "the end of the symbol after a space" expected)))))
+             (spelling (expected)
+               ;; An uppercase letter (not %LETTER-INDEX, which takes lowercase too) and
+               ;; the longest accidental token; what follows is read as a modifier.
+               (let ((letter (and (< pos end) (position (char string pos) +letter-names+))))
+                 (unless letter (fail pos expected))
+                 ;; "" is a token, so some entry always matches.
+                 (destructuring-bind (token . alter)
+                     (%longest-token +accidental-tokens+ string (1+ pos))
+                   (incf pos (1+ (length token)))
+                   (make-pitch-class-name :letter letter :alter alter))))
+             (admit (token)
+               ;; The token's digits, then R1-R6; both errors at the token's start.
+               (let ((start (second token))
+                     (item (%token-item string token)))
+                 (unless item
+                   (fail start (%token-expected token) "not an allowed degree"))
+                 (multiple-value-bind (expected rule) (%admit-item draft item)
+                   (when expected
+                     (fail start expected (format nil "breaks rule ~A" rule))))
+                 (setf pos (third token))))
+             (read-quality ()
+               ;; The longest of the dialect's words and the modifier token here, a
+               ;; tie going to the word. A winning token is returned unconsumed, for
+               ;; the modifier loop.
+               (let* ((word (%longest-token words string pos)) ; the "" row always matches
+                      (token (%scan-modifier string pos))
+                      (token-wins (and token (> (third token) (+ pos (length (first word)))))))
+                 (cond (token-wins
+                        (setf draft (%make-chord-draft :major '() '())))
+                       ((and (string= "" (first word)) (null token) (< pos end)
+                             (alpha-char-p (char string pos))) ; so not "(", "/" or space
+                        (let ((stop (or (position-if-not (lambda (c)
+                                                           (or (alpha-char-p c) (%ascii-digit-p c)))
+                                                         string :start pos)
+                                        end)))
+                          (setf draft (%make-chord-draft
+                                       (%unknown-chord-quality (subseq string pos stop)) '() '())
+                                pos stop)))
+                       (t
+                        (destructuring-bind (text quality extensions added) word
+                          (setf draft (%make-chord-draft quality extensions added))
+                          (incf pos (length text)))))
+                 (and token-wins token)))
+             (read-item ()
+               ;; A group item, admitted; NIL when none starts here.
+               (let ((token (or (%scan-modifier string pos) (%scan-bare-degree string pos))))
+                 (when token
+                   (admit token)
+                   t)))
+             (read-group ()
+               ;; "(" item { [","] item } ")"
+               (incf pos)
+               (unless (read-item)
+                 (fail pos "a group item: an alteration, add, omit, sus, alt or a degree"))
+               (loop (cond ((at-p #\,)
+                            (incf pos)
+                            (unless (read-item) (fail pos "a group item after \",\"")))
+                           ((at-p #\))
+                            (incf pos)
+                            (return t))
+                           ((read-item))
+                           (t (fail pos "\",\" or \")\""))))))
+      (skip-space)
+      (let ((no-chord (%longest-token +no-chord-tokens+ string pos)))
+        (when no-chord
+          (incf pos (length (car no-chord)))
+          (finish "the end of the symbol after N.C.")
+          (return-from parse-chord-symbol
+            (make-chord-symbol :no-chord-p t :text string :dialect dialect))))
+      (let ((root (spelling "a root letter A-G or N.C.")))
+        (loop for token = (or (read-quality) (%scan-modifier string pos))
+                then (%scan-modifier string pos)
+              while token
+              do (admit token))
+        (let* ((grouped (and (at-p #\() (read-group)))
+               (bass (and (at-p #\/)
+                          (progn (incf pos) (spelling "a bass letter A-G")))))
+          (finish (cond (bass "the end of the symbol")
+                        (grouped "\"/\" and a bass letter, or the end of the symbol")
+                        (t "a modifier, \"(\", \"/\" or the end of the symbol")))
+          (%draft-chord draft root bass string dialect))))))
 
 (defun print-chord-symbol (chord &key dialect (accidentals :ascii))
   "Canonical text of CHORD in DIALECT (default: CHORD's, else :POP); ACCIDENTALS
-is :ASCII or :UNICODE."
-  (declare (ignorable chord dialect accidentals))
-  (%mt3-pending 'print-chord-symbol))
+is :ASCII or :UNICODE (see the file header). MUSIC-THEORY-ERROR for a CHORD that is
+not well formed."
+  (check-type chord chord-symbol)
+  (let ((dialect (or dialect (chord-symbol-dialect chord) :pop)))
+    (check-type dialect (member :classical :pop :jazz))
+    (check-type accidentals (member :ascii :unicode))
+    (%check-chord-symbol chord)
+    (if (chord-symbol-no-chord-p chord)
+        (first +no-chord-words+)
+        (let* ((cell (%print-cell (chord-symbol-quality chord) dialect))
+               ;; Unfold: (quality (5 . alter)) prints as that quality and alteration.
+               (quality (if (consp cell) (first cell) (chord-symbol-quality chord)))
+               (alterations (if (consp cell)
+                                (merge 'list (list (second cell))
+                                       (copy-list (chord-symbol-alterations chord)) #'%pair<)
+                                (chord-symbol-alterations chord)))
+               (extensions (chord-symbol-extensions chord))
+               (added (chord-symbol-added chord))
+               (omitted (chord-symbol-omitted chord))
+               (special (%print-special dialect quality extensions alterations added omitted))
+               (word (if special (fourth special) (%print-word quality extensions dialect)))
+               (bass (chord-symbol-bass chord)))
+          (when special
+            (destructuring-bind (dialects q e w alt add omit) special
+              (declare (ignore dialects q e w))
+              (setf alterations (remove-if (lambda (pair) (member pair alt :test #'equal)) alterations)
+                    added (remove-if (lambda (pair) (member pair add :test #'equal)) added)
+                    omitted (remove-if (lambda (degree) (member degree omit)) omitted))))
+          (format nil "~A~A~@[sus~D~]~A~@[/~A~]"
+                  (pitch-class-string (chord-symbol-root chord) :accidentals accidentals)
+                  word
+                  (chord-symbol-suspension chord)
+                  (%group-text alterations added omitted accidentals)
+                  (and bass (pitch-class-string bass :accidentals accidentals)))))))
