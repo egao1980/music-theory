@@ -103,6 +103,18 @@
 ;;;;       of the EXTENSIONS; it is not altered, and not omitted twice. An
 ;;;;       alteration of an omitted degree is an error too. C(omit7),
 ;;;;       Csus4(omit3), C9(omit11), C7(b5,omit5) are errors.
+;;;;       One exception (music-theory#10): a written omit5 (or no5) together
+;;;;       with exactly one alteration of 5 that +FIFTH-ALTERATION-FOLDS+ folds
+;;;;       into the quality. That alteration names the folded quality, and the
+;;;;       omission removes its fifth: Cm(b5,omit5) is the diminished triad
+;;;;       without its fifth, Cm7(b5,omit5) and Cm7b5(omit5) the
+;;;;       half-diminished seventh, C(#5,omit5) the augmented triad,
+;;;;       C7(#5,omit5) the augmented seventh, in either order (Cm(omit5,b5)).
+;;;;       It is how :POP and :JAZZ print those chords. A second alteration of 5
+;;;;       still breaks R5 (Cm(b5,#5,omit5) at "omit", Cm(b5,omit5,#5) at the
+;;;;       "#"), and so does an alteration that does not fold (C(b5,omit5),
+;;;;       C7(b5,omit5)). The 5 that "alt" omits is not written, so it takes no
+;;;;       exception: C7#5alt and C7alt(#5) are errors.
 ;;;;   R6  "alt" needs the quality :DOMINANT-7 with no EXTENSIONS, once; its
 ;;;;       tones obey R3 and R5 like any others (C7b9alt is an error).
 ;;;; After the body, the fold: when ALTERATIONS holds exactly one alteration of
@@ -165,6 +177,9 @@
 ;;;;   unfold    a cell (quality (5 . alter)) of +CHORD-PRINT-WORDS+ prints the
 ;;;;             chord as that quality plus that fifth alteration: :POP prints the
 ;;;;             diminished triad "Cm(b5)" and Cø7 "Cm7(b5)", :JAZZ "C-(b5)".
+;;;;             Without its fifth the alteration stays and the omission joins
+;;;;             it: "Cm(b5,omit5)", "Cm7(b5,omit5)", "C-(b5,omit5)" (rule R5's
+;;;;             exception reads them back).
 ;;;;   specials  the first row of +CHORD-PRINT-SPECIALS+ for the dialect whose
 ;;;;             quality and extensions are the chord's and whose alterations,
 ;;;;             added and omitted tones are all among the chord's: its word is
@@ -471,7 +486,8 @@ degree), (:ALT). An addition of a tension pair is an alteration (Cadd#11 = C(#11
                          (:conc-name %draft-) (:copier nil) (:predicate nil))
   "The items of a chord read, or replayed by %CHECK-CHORD-SYMBOL, so far. Internal
 scratch of one call; it never escapes."
-  quality extensions added (suspension nil) (alterations '()) (omitted '()))
+  quality extensions added (suspension nil) (alterations '()) (omitted '())
+  (alt nil))                  ; true once "alt" is read: 5's omission is then alt's, not written
 
 (defun %admit-item (draft item)
   "Add ITEM to DRAFT when rules R1-R6 (file header) allow it, and return NIL.
@@ -487,52 +503,60 @@ that holds the rules."
          (alterations (%draft-alterations draft))
          (added (%draft-added draft))
          (omitted (%draft-omitted draft)))
-    (destructuring-bind (kind &optional arg) item
-      (ecase kind
-        (:sus
-         (cond (suspension (values "one suspension at most" "R1"))
-               ((not (member quality +suspendable-qualities+))
-                (values "a suspension on a major-third quality" "R1"))
-               ((member 3 omitted) (values "a suspension with the 3 not omitted" "R1"))
-               ((assoc arg added) (values "a suspension of a degree that is not added" "R1"))
-               (t (setf (%draft-suspension draft) arg) nil)))
-        (:alter
-         (let ((degree (car arg)))
-           (cond ((and (= degree 5) (not (member quality +perfect-fifth-qualities+)))
-                  (values "an alteration of 5 on a quality with a perfect fifth" "R2"))
-                 ((member arg alterations :test #'equal)
-                  (values "an alteration not already in the chord" "R3"))
-                 ((assoc degree added)
-                  (values "an alteration of a degree that is not added" "R4"))
-                 ((member degree omitted)
-                  (values "an alteration of a degree that is not omitted" "R5"))
-                 (t (push arg (%draft-alterations draft)) nil))))
-        (:add
-         (let ((degree (car arg)))
-           (if (or (member degree natural) (member degree extensions) (eql degree suspension)
-                   (assoc degree alterations) (assoc degree added))
-               (values "an added degree that is not already in the chord" "R4")
-               (progn (push arg (%draft-added draft)) nil))))
-        (:omit
-         (cond ((member arg omitted) (values "a degree not already omitted" "R5"))
-               ((assoc arg alterations) (values "an omitted degree that is not altered" "R5"))
-               ((not (if (member arg '(9 11))
-                         (member arg extensions)
-                         (and (member arg natural) (not (and (= arg 3) suspension)))))
-                (values "an omitted degree that is a natural tone of the chord" "R5"))
-               (t (push arg (%draft-omitted draft)) nil)))
-        (:alt
-         (cond ((not (and (eq quality :dominant-7) (null extensions)))
-                (values "\"alt\" on a dominant seventh with no extensions" "R6"))
-               ((subsetp +altered-dominant+ alterations :test #'equal)
-                (values "\"alt\" once" "R6"))
-               (t
-                ;; Its tones join like any others (R3, R5).
-                (dolist (sub (append (mapcar (lambda (pair) (list :alter pair)) +altered-dominant+)
-                                     (list (list :omit 5)))
-                             nil)
-                  (multiple-value-bind (expected rule) (%admit-item draft sub)
-                    (when expected (return (values expected rule))))))))))))
+    (flet ((written-fold-p (pairs)
+             ;; R5's exception (music-theory#10): 5's omission is written, not alt's,
+             ;; and PAIRS holds exactly one alteration of 5, which folds.
+             (and (not (%draft-alt draft)) (%fold-row quality pairs))))
+      (destructuring-bind (kind &optional arg) item
+        (ecase kind
+          (:sus
+           (cond (suspension (values "one suspension at most" "R1"))
+                 ((not (member quality +suspendable-qualities+))
+                  (values "a suspension on a major-third quality" "R1"))
+                 ((member 3 omitted) (values "a suspension with the 3 not omitted" "R1"))
+                 ((assoc arg added) (values "a suspension of a degree that is not added" "R1"))
+                 (t (setf (%draft-suspension draft) arg) nil)))
+          (:alter
+           (let ((degree (car arg)))
+             (cond ((and (= degree 5) (not (member quality +perfect-fifth-qualities+)))
+                    (values "an alteration of 5 on a quality with a perfect fifth" "R2"))
+                   ((member arg alterations :test #'equal)
+                    (values "an alteration not already in the chord" "R3"))
+                   ((assoc degree added)
+                    (values "an alteration of a degree that is not added" "R4"))
+                   ((and (member degree omitted)
+                         (not (and (= degree 5) (written-fold-p (cons arg alterations)))))
+                    (values "an alteration of a degree that is not omitted" "R5"))
+                   (t (push arg (%draft-alterations draft)) nil))))
+          (:add
+           (let ((degree (car arg)))
+             (if (or (member degree natural) (member degree extensions) (eql degree suspension)
+                     (assoc degree alterations) (assoc degree added))
+                 (values "an added degree that is not already in the chord" "R4")
+                 (progn (push arg (%draft-added draft)) nil))))
+          (:omit
+           (cond ((member arg omitted) (values "a degree not already omitted" "R5"))
+                 ((and (assoc arg alterations)
+                       (not (and (eql arg 5) (written-fold-p alterations))))
+                  (values "an omitted degree that is not altered" "R5"))
+                 ((not (if (member arg '(9 11))
+                           (member arg extensions)
+                           (and (member arg natural) (not (and (= arg 3) suspension)))))
+                  (values "an omitted degree that is a natural tone of the chord" "R5"))
+                 (t (push arg (%draft-omitted draft)) nil)))
+          (:alt
+           (cond ((not (and (eq quality :dominant-7) (null extensions)))
+                  (values "\"alt\" on a dominant seventh with no extensions" "R6"))
+                 ((subsetp +altered-dominant+ alterations :test #'equal)
+                  (values "\"alt\" once" "R6"))
+                 (t
+                  ;; Its tones join like any others (R3, R5); its omit5 is not written.
+                  (setf (%draft-alt draft) t)
+                  (dolist (sub (append (mapcar (lambda (pair) (list :alter pair)) +altered-dominant+)
+                                       (list (list :omit 5)))
+                               nil)
+                    (multiple-value-bind (expected rule) (%admit-item draft sub)
+                      (when expected (return (values expected rule)))))))))))))
 
 (defun %pair< (a b)
   "Order of (degree . alter) pairs: by degree, then by alter."

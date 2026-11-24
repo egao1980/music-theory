@@ -6,8 +6,8 @@
   (:nicknames #:stack-music)
   (:documentation "Spelled pitches, intervals and the line of fifths (MT0); time, meter and
 tempo (MT1); keys, scale degrees and Roman numerals (MT2); chord symbols: the
-grammar, dialects, realisation and essential tones (MT3). A later slice adds
-spelling, key detection and transposition to a key (MT4).")
+grammar, dialects, realisation and essential tones (MT3); spelling, key
+detection and transposition to a key (MT4).")
   (:export
    ;; Conditions (all slices; see conditions.lisp)
    #:music-theory-error #:music-theory-warning
@@ -56,6 +56,10 @@ spelling, key detection and transposition to a key (MT4).")
    ;; Chord symbols: grammar, dialects, realisation, priorities (MT3)
    #:parse-chord-symbol #:print-chord-symbol
    #:chord-tones #:chord-essential-tones #:transpose-chord-symbol
+   ;; Spelling, key detection, transposition (MT4)
+   #:spell-midi #:spell-sequence
+   #:pitch-class-histogram #:detect-key
+   #:transpose-to-key #:choose-enharmonic-key
    ;; Roman numerals (MT2)
    #:roman-numeral #:make-roman-numeral #:roman-numeral-p
    #:roman-numeral-degree #:roman-numeral-alteration #:roman-numeral-quality
