@@ -5,21 +5,36 @@
 ;;;;
 ;;;; LETTER is 0..6 for C D E F G A B. ALTER is -2..2 (bb b natural # ##).
 ;;;; OCTAVE is scientific: C4 = MIDI 60, and the octave belongs to the letter,
-;;;; so B#3 is MIDI 60 and Cb4 is MIDI 59. Parsed octaves are -1..9.
+;;;; so B#3 is MIDI 60 and Cb4 is MIDI 59. OCTAVE is any integer, in values
+;;;; and in text alike (0.5.1, music-theory#15): PARSE-PITCH reads every octave
+;;;; PITCH-NAME prints ("C10", "B#-2", "G-12"). The MIDI numbers 0..127 are
+;;;; the octaves -1..9 (C-1 to G9); a function that needs a MIDI number checks
+;;;; that range itself (SPELL-MIDI's argument is an (INTEGER 0 127)), while
+;;;; PITCH-MIDI and TRANSPOSE-PITCH work beyond it. SPELL-MIDI and
+;;;; TRANSPOSE-PITCH can return such pitches: 0 in C# major is B#-2.
+;;;; Why not the other direction of music-theory#15, a constructor limited to
+;;;; -1..9: it changes no test row, but it makes errors of values the library
+;;;; builds today (B#-2 above, G10 from TRANSPOSE-PITCH of G9 by P8), and
+;;;; SPELL-MIDI would need a new candidate rule at MIDI 0 and 1. Widening the
+;;;; parser changes only the two parse-pitch-rejects rows that tested the range
+;;;; (C10, C-2 in tests/mt0-test.lisp), now parse-pitch-accepts rows.
 ;;;;
 ;;;; Text syntax, read by PARSE-PITCH (surrounding whitespace is trimmed):
 ;;;;   pitch      = letter accidental octave
 ;;;;   letter     = "A".."G" | "a".."g"
 ;;;;   accidental = "" | "#" | "##" | "x" | "b" | "bb"
 ;;;;              | "♯" | "♯♯" | "𝄪" | "♭" | "♭♭" | "𝄫"
-;;;;   octave     = ["-"] digit+          ; -1..9
+;;;;   octave     = ["-"] digit+          ; any integer (0.5.1; was -1..9)
 ;;;; Anything else signals INVALID-PITCH with TEXT = the original string, inside
 ;;;; a USE-VALUE restart. "-" is never a flat: "B-1" is B in octave -1.
 ;;;; PARSE-PITCH-CLASS reads letter accidental with no octave.
 ;;;;
 ;;;; PITCH-NAME prints ASCII by default ("F#4", "Bbb3", "C##5"), so
-;;;; (pitch-name (parse-pitch s)) = s for canonical ASCII input.
-;;;; With :ACCIDENTALS :UNICODE it prints ♯ ♭ 𝄪 𝄫 ("F♯4", "B𝄫3", "C𝄪5").
+;;;; (pitch-name (parse-pitch s)) = s for canonical ASCII input (no leading
+;;;; zero, no "-0"). With :ACCIDENTALS :UNICODE it prints ♯ ♭ 𝄪 𝄫 ("F♯4",
+;;;; "B𝄫3", "C𝄪5").
+;;;; Round trip: for every SPELLED-PITCH p and either ACCIDENTALS style,
+;;;;   (equalp (parse-pitch (pitch-name p :accidentals style)) p).
 
 (in-package #:music-theory)
 
@@ -149,7 +164,7 @@ Returns LETTER, ALTER and the index after the accidental. FAIL never returns."
         (values letter alter next)))))
 
 (defun %scan-octave (text start fail)
-  "Read [\"-\"] ASCII-digit+ from START to the end of TEXT, range -1..9.
+  "Read [\"-\"] ASCII-digit+ from START to the end of TEXT: any integer (0.5.1).
 FAIL never returns."
   (let* ((end (length text))
          (negative (and (< start end) (char= #\- (char text start))))
@@ -160,7 +175,6 @@ FAIL never returns."
     ;; Only validated ASCII digits reach PARSE-INTEGER.
     (let ((octave (parse-integer text :start digits :end stop)))
       (when negative (setf octave (- octave)))
-      (unless (<= -1 octave 9) (funcall fail "octave out of range"))
       octave)))
 
 (defun parse-pitch (string)

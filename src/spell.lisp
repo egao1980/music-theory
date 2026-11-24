@@ -29,7 +29,14 @@
 ;;;;   minor  T + {-4 -3 -1 0 1 2 5}    (A minor: F C D A E B G#)
 ;;;; where T is (PITCH-FIFTHS (KEY-TONIC key)); for the 30 keys these are the
 ;;;; PITCH-FIFTHS of (SCALE-DEGREES key) and (SCALE-DEGREES key :variant
-;;;; :harmonic). Without a KEY, SPELL-SEQUENCE takes the first key of
+;;;; :harmonic). K sets the center (below). The key's notes N, which rule S1
+;;;; keeps, are K and, in minor, the natural seventh and the raised sixth, T-2
+;;;; and T+3 (+KEY-NOTE-POSITIONS+):
+;;;;   major  N = K
+;;;;   minor  T + {-4 -3 -2 -1 0 1 2 3 5}  (A minor: F C G D A E B F# G#)
+;;;; the natural, harmonic and melodic forms together: for the 30 keys, the
+;;;; PITCH-FIFTHS of SCALE-DEGREES under the three variants. Without a KEY,
+;;;; SPELL-SEQUENCE takes the first key of
 ;;;;   (detect-key (pitch-class-histogram midis :weight :count))
 ;;;; or C major when that is NIL (no notes, or every pitch class equally often:
 ;;;; the chromatic scale). SPELL-MIDI without a KEY uses C major.
@@ -44,9 +51,14 @@
 ;;;; before the run is note i-1 and the note after it the first note past the
 ;;;; run. Rule by rule, the first that applies decides:
 ;;;;   S0  (SPELL-MIDI only) PREVIOUS has MIDI number m: PREVIOUS's spelling.
-;;;;   S1  Key: a candidate in K. At most one is, since K spans fewer than 12
-;;;;       positions. Every scale note keeps the key's spelling: B#3 in C#
-;;;;       major, Cb5 in Gb major, D4 in Eb minor, C##4 in D# minor.
+;;;;   S1  Key: a candidate in N. At most one is, since N spans fewer than 12
+;;;;       positions. Every note of the key keeps the key's spelling: B#3 in C#
+;;;;       major, Cb5 in Gb major, D4 in Eb minor, C##4 in D# minor; in minor
+;;;;       the melodic and natural forms too: E4 and F4 in G minor, C4 and B3
+;;;;       in D minor, B#3 and C#4 in D# minor. So a chromatic line through the
+;;;;       6th and 7th degrees keeps them: G minor 55 54 53 52 51 50 is G3 F#3
+;;;;       F3 E3 Eb3 D3 (the ground of Purcell's "When I am laid in earth"),
+;;;;       E minor 59 60 61 62 63 64 is B3 C4 C#4 D4 D#4 E4.
 ;;;;   Otherwise LO is the largest candidate at or below c(i) and HI the
 ;;;;   smallest above it: the flatter and the sharper spelling nearest the
 ;;;;   center (Eb and D# in C major, D and C## in G# minor).
@@ -60,12 +72,22 @@
 ;;;;       semitone above m: HI; one below: LO. The step is then diatonic:
 ;;;;       C major D D# E, E Eb D, G Ab G, A G# A; C## resolving to D# in B
 ;;;;       major, Ebb to Db in Ab major.
-;;;;   S5  Interval: when exactly one of LO and HI lies within 5 positions of
-;;;;       the note before the run (SPELL-MIDI: PREVIOUS), a third, fourth or
-;;;;       other interval that is neither augmented nor diminished, that one:
-;;;;       C major E G# B, F Ab C.
+;;;;   S5  Interval: when the note's ambiguity (below) is at least 3/4
+;;;;       (+INTERVAL-RULE-AMBIGUITY+) and exactly one of LO and HI lies within
+;;;;       5 positions of the note before the run (SPELL-MIDI: PREVIOUS), a
+;;;;       third, fourth or other interval that is neither augmented nor
+;;;;       diminished, that one: C major E G# B, F Ab C; after Eb4 in C major,
+;;;;       66 is Gb4 (ambiguity 37/48). Below 3/4 the center prefers one of LO
+;;;;       and HI by more than 3 positions, and S6 decides: D major 62 61 60 is
+;;;;       D4 C#4 C4 and F major 69 70 71 is A4 Bb4 B4 (ambiguity 37/54 on the
+;;;;       last note; S5 would take B#3 and Cb5, a semitone from the note before
+;;;;       but five fifths outside the key).
 ;;;;   S6  Center: the one of LO and HI nearer c(i).
 ;;;;   S7  Tie: HI, after signalling AMBIGUOUS-SPELLING (below).
+;;;; 0.5.1 (music-theory#14) amended S1 (N, not K) and S5 (the ambiguity
+;;;; bound). Every 0.5.0 example above still holds; tests/mt51-test.lisp has
+;;;; the regression rows and a corpus of chromatic lines from public-domain
+;;;; works (tests/fixtures/PROVENANCE.md).
 ;;;;
 ;;;; Ambiguity. For note i with MIDI number m, d is the distance from c(i) to
 ;;;; the nearest integer f with 7f ≡ m (mod 12), so 0 ≤ d ≤ 6, and the
@@ -81,15 +103,30 @@
 ;;;; spelling chosen enters the window like any other.
 ;;;;
 ;;;; Properties: transposing MIDIS by octaves moves every spelling by the same
-;;;; octaves; with a KEY, every note of the key's positions is spelled from them.
+;;;; octaves; with a KEY, every note of the key's notes N is spelled from them
+;;;; (in minor: from the natural, harmonic and melodic scales).
 
 (in-package #:music-theory)
 
 (defparameter +key-positions+
   '((:major -1 0 1 2 3 4 5)
     (:minor -4 -3 -1 0 1 2 5))
-  "Per mode, the line-of-fifths positions of the key's spelled notes relative to
-the tonic: the major scale, and the harmonic minor scale (raised seventh). Data.")
+  "Per mode, K: the line-of-fifths positions of the key's scale relative to the
+tonic, the major scale and the harmonic minor scale (raised seventh). Their mean
+sets the center. Data.")
+
+(defparameter +key-note-positions+
+  '((:major -1 0 1 2 3 4 5)
+    (:minor -4 -3 -2 -1 0 1 2 3 5))
+  "Per mode, N: the line-of-fifths positions relative to the tonic that rule S1
+keeps, the major scale; in minor the natural, harmonic and melodic scales
+together (+KEY-POSITIONS+ with the natural seventh -2 and the raised sixth 3).
+Data (0.5.1, music-theory#14).")
+
+(defparameter +interval-rule-ambiguity+ 3/4
+  "The least ambiguity of a note at which rule S5 (interval) decides it. Below it
+the center prefers one spelling by more than 3 positions and S6 decides. Data
+(0.5.1, music-theory#14).")
 
 (defparameter +default-spelling-key+ "C major"
   "The key SPELL-MIDI uses without a KEY, and SPELL-SEQUENCE when it has no KEY and
@@ -119,11 +156,12 @@ DETECT-KEY returns NIL (KEY-NAME text). Data.")
     (make-spelled-pitch :letter letter :alter alter
                         :octave (1- (floor (- midi (aref +letter-semitones+ letter) alter) 12)))))
 
-(defun %key-positions (key)
-  "K: the line-of-fifths positions of KEY's notes, a fresh list (+KEY-POSITIONS+)."
+(defun %key-positions (key &optional (table +key-positions+))
+  "The line-of-fifths positions of KEY's mode row in TABLE, a fresh list: K from
++KEY-POSITIONS+ (the default), N from +KEY-NOTE-POSITIONS+."
   (let ((tonic (pitch-fifths (key-tonic key))))
     (mapcar (lambda (offset) (+ tonic offset))
-            (rest (assoc (key-mode key) +key-positions+)))))
+            (rest (assoc (key-mode key) table)))))
 
 (defun %ambiguity (midi center)
   "d/6, d the distance from CENTER to the nearest integer f with 7f ≡ MIDI (mod 12)."
@@ -154,20 +192,23 @@ else is a TYPE-ERROR); MUFFLE-WARNING, or a handler that declines, keeps HI."
           hi))
       hi))
 
-(defun %spell-choice (midi center positions before recent next)
+(defun %spell-choice (midi center key-notes before recent next)
   "Rules S0-S7 (file header) for the MIDI number MIDI, the first that applies:
 the line-of-fifths position chosen and the rule's name, as two values. CENTER is the
-note's center c(i) and POSITIONS the key's, K. BEFORE is the note just before,
-(midi . position), or NIL: PREVIOUS for SPELL-MIDI, note i-1 in a sequence. RECENT
-is the position of the latest window note with MIDI's pitch class, or NIL. NEXT is
-the MIDI number of the first note past the run, or NIL (always NIL for SPELL-MIDI).
+note's center c(i) (the mean of K and the window, from %SPELL-NOTES) and KEY-NOTES
+the key's notes N (S1). BEFORE is the note just before, (midi . position), or NIL:
+PREVIOUS for SPELL-MIDI, note i-1 in a sequence. RECENT is the position of the latest
+window note with MIDI's pitch class, or NIL. NEXT is the MIDI number of the first
+note past the run, or NIL (always NIL for SPELL-MIDI).
 S0 is also the run rule: a note with the MIDI number of the note just before it
 belongs to that note's run and takes its spelling, so a run is decided once, at its
-first note. This is the one place that holds the rules."
+first note. S5 decides only from +INTERVAL-RULE-AMBIGUITY+ up. This is the one place
+that holds the rules."
   (let* ((candidates (%candidates midi))
-         (in-key (find-if (lambda (f) (member f positions)) candidates))
+         (in-key (find-if (lambda (f) (member f key-notes)) candidates))
          (lo (find-if (lambda (f) (<= f center)) candidates :from-end t))
-         (hi (find-if (lambda (f) (> f center)) candidates)))
+         (hi (find-if (lambda (f) (> f center)) candidates))
+         (interval-p (and before (>= (%ambiguity midi center) +interval-rule-ambiguity+))))
     (flet ((near-before-p (f)
              (<= (abs (- f (cdr before))) 5)))
       (cond ((and before (= midi (car before))) (values (cdr before) "S0"))
@@ -178,8 +219,8 @@ first note. This is the one place that holds the rules."
             ((eql next (1+ midi)) (values hi "S4"))
             ((eql next (1- midi)) (values lo "S4"))
             ;; HI - LO = 12, so at most one of them lies within 5: "exactly one".
-            ((and before (near-before-p lo)) (values lo "S5"))
-            ((and before (near-before-p hi)) (values hi "S5"))
+            ((and interval-p (near-before-p lo)) (values lo "S5"))
+            ((and interval-p (near-before-p hi)) (values hi "S5"))
             ((< (- center lo) (- hi center)) (values lo "S6"))
             ((> (- center lo) (- hi center)) (values hi "S6"))
             (t (values (%ambiguous-spelling midi lo hi) "S7"))))))
@@ -195,6 +236,7 @@ and so the center and rule S3, and it is the note before the first (S0, S5)."
          (spelled (make-array n))       ; positions, as spelled
          (sums (make-array (1+ n) :initial-element 0)) ; (svref sums j) = Σ spelled[0..j-1]
          (positions (%key-positions key))
+         (key-notes (%key-positions key +key-note-positions+)) ; N, for S1
          (key-sum (reduce #'+ positions))
          (key-count (length positions))
          (chosen '())
@@ -210,7 +252,7 @@ and so the center and rule S3, and it is the note before the first (S0, S5)."
           for center = (/ (+ key-sum (- (svref sums i) (svref sums start)))
                           (+ key-count (- i start)))
           for position = (%spell-choice
-                          midi center positions
+                          midi center key-notes
                           (and (plusp i) (cons (svref notes (1- i)) (svref spelled (1- i))))
                           (loop for j from (1- i) downto start
                                 when (= (mod (svref notes j) 12) (mod midi 12))

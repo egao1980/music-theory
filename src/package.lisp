@@ -7,7 +7,8 @@
   (:documentation "Spelled pitches, intervals and the line of fifths (MT0); time, meter and
 tempo (MT1); keys, scale degrees and Roman numerals (MT2); chord symbols: the
 grammar, dialects, realisation and essential tones (MT3); spelling, key
-detection and transposition to a key (MT4).")
+detection and transposition to a key (MT4); MusicXML <kind> values for chord
+symbols (0.5.1).")
   (:export
    ;; Conditions (all slices; see conditions.lisp)
    #:music-theory-error #:music-theory-warning
@@ -56,6 +57,8 @@ detection and transposition to a key (MT4).")
    ;; Chord symbols: grammar, dialects, realisation, priorities (MT3)
    #:parse-chord-symbol #:print-chord-symbol
    #:chord-tones #:chord-essential-tones #:transpose-chord-symbol
+   ;; Chord symbols: MusicXML <kind> (0.5.1, music-theory#16)
+   #:musicxml-kind-chord-symbol #:chord-symbol-musicxml-kind
    ;; Spelling, key detection, transposition (MT4)
    #:spell-midi #:spell-sequence
    #:pitch-class-histogram #:detect-key

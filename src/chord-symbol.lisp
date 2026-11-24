@@ -203,6 +203,94 @@
 ;;;;   (parse-chord-symbol (print-chord-symbol c :dialect d :accidentals a) :dialect d)
 ;;;;   is equal to C in every slot but TEXT and DIALECT (which is D); and
 ;;;;   printing that value again gives the same text.
+;;;;
+;;;; MusicXML (0.5.1, music-theory#16). A MusicXML <harmony> is a root, a
+;;;; <kind>, a list of <degree> elements and an optional bass. A DEGREE here is
+;;;; a list (type value alter): TYPE :ADD, :ALTER or :SUBTRACT (<degree-type>),
+;;;; VALUE an integer (<degree-value>), ALTER an integer (<degree-alter>, in
+;;;; semitones). As in MusicXML, an :ADD's ALTER is relative to a dominant
+;;;; chord (M2 P4 P5 M6 m7 M9 P11 M13 above the root, which for 2 4 5 6 9 11 13
+;;;; are the natural intervals of +CHORD-DEGREE-INTERVALS+), an :ALTER's to the
+;;;; kind's own tone, and a :SUBTRACT's ALTER is 0. Lists of degrees are in
+;;;; MusicXML order.
+;;;;
+;;;; CHORD-SYMBOL-MUSICXML-KIND chord → (values kind degrees), for a well-formed
+;;;; CHORD (else MUSIC-THEORY-ERROR as for PRINT-CHORD-SYMBOL; TYPE-ERROR for a
+;;;; non-CHORD-SYMBOL). ROOT and BASS are the chord's own slots.
+;;;;   X1  N.C.: "none" and ().
+;;;;   X2  The kind: the first row of +MUSICXML-KINDS+, in table order, whose
+;;;;       symbol (read with PARSE-CHORD-SYMBOL) has the chord's QUALITY and
+;;;;       EXTENSIONS and no ALTERATIONS, SUSPENSION, ADDED or OMITTED; for
+;;;;       :MAJOR with a SUSPENSION, the row "suspended-second" or
+;;;;       "suspended-fourth", which then writes the suspension. So "major"
+;;;;       (not "Neapolitan") and "power" (not "pedal").
+;;;;       When no row has the chord's QUALITY and EXTENSIONS, the row of
+;;;;       +MUSICXML-STRUCTURAL-DEGREES+ for the QUALITY names a base quality:
+;;;;       the kind is the base quality's with the EXTENSIONS, and the row's
+;;;;       degrees come first. C+M7 is "major-seventh" ((:alter 5 1)), Cø9
+;;;;       "minor-ninth" ((:alter 5 -1)), CmM9 "minor-ninth" ((:alter 7 1)),
+;;;;       C°9 "minor-ninth" ((:alter 5 -1) (:alter 7 -1)), C+9 "dominant-ninth"
+;;;;       ((:alter 5 1)).
+;;;;   X3  Then, in this order: a SUSPENSION the kind does not write, as
+;;;;       (:subtract 3 0) followed by (:add s 0); each ALTERATIONS pair
+;;;;       (d . a), as (:alter d a) when d is 5 or one of the EXTENSIONS (a tone
+;;;;       of the kind), else (:add d a); each ADDED pair (d . a) as (:add d a);
+;;;;       each OMITTED degree d as (:subtract d 0). Each group keeps its slot's
+;;;;       order. C7(b9) is "dominant" ((:add 9 -1)), C13(#11) "dominant-13th"
+;;;;       ((:alter 11 1)), C9(#11) "dominant-ninth" ((:add 11 1)), C7sus4
+;;;;       "dominant" ((:subtract 3 0) (:add 4 0)), C(add4,omit3) "major"
+;;;;       ((:add 4 0) (:subtract 3 0)), C6/9 "major-sixth" ((:add 9 0)).
+;;;;   The functional kinds (Neapolitan, Italian, French, German, Tristan) and
+;;;;   "pedal" are never returned: their symbols give the plain kinds, the
+;;;;   Italian sixth "power" ((:add 4 1) (:add 6 -1) (:subtract 5 0)). "other"
+;;;;   is never returned either.
+;;;;
+;;;; MUSICXML-KIND-CHORD-SYMBOL kind root &key bass degrees → a CHORD-SYMBOL or NIL.
+;;;;   KIND is a string, one of the 33 MusicXML 4.0 values of +MUSICXML-KINDS+
+;;;;   compared with STRING= (case matters: "Neapolitan"). Another string
+;;;;   signals MUSIC-THEORY-ERROR (TEXT = KIND, REASON "not a MusicXML 4.0
+;;;;   kind"), a non-string a TYPE-ERROR. DEGREES that are not a proper list of
+;;;;   degrees (lists (type value alter) of a TYPE :ADD, :ALTER or :SUBTRACT and
+;;;;   two integers) are a TYPE-ERROR. ROOT must be a PITCH-CLASS-NAME and BASS
+;;;;   one or NIL, else TYPE-ERROR, except for "none" and "other", which ignore
+;;;;   them.
+;;;;   Y1  "other" (a harmony spelled by <degree> elements alone, which a
+;;;;       CHORD-SYMBOL cannot hold): NIL, whatever ROOT, BASS and DEGREES are.
+;;;;   Y2  "none": N.C. (MusicXML writes a root even then); DEGREES must be (),
+;;;;       else MUSIC-THEORY-ERROR.
+;;;;   Y3  Otherwise the value starts as the kind's symbol in +MUSICXML-KINDS+
+;;;;       on ROOT, with BASS as its bass.
+;;;;   Y4  Structural degrees: the first row of +MUSICXML-STRUCTURAL-DEGREES+
+;;;;       whose base quality is the kind's quality, whose degrees are all in
+;;;;       DEGREES, and such that DEGREES alter the row's degree values (5, 7)
+;;;;       in no other way: the QUALITY becomes the row's, and those degrees are
+;;;;       used. "minor-13th" ((:alter 7 1) (:alter 5 -1)) is CmM13(b5);
+;;;;       "minor-seventh" ((:alter 5 -1) (:alter 5 1)) keeps both alterations.
+;;;;   Y5  Suspension: in the DEGREES Y4 left, a (:subtract 3 0) followed
+;;;;       directly by (:add 2 0) or (:add 4 0), when the quality has a major
+;;;;       third (+SUSPENDABLE-QUALITIES+), is SUSPENSION 2 or 4; both are used.
+;;;;       In the other order they stay an omission and an addition, which is
+;;;;       how X3 writes C(add4,omit3).
+;;;;   Y6  Every other degree is an item, read as PARSE-CHORD-SYMBOL reads one:
+;;;;       (:alter d a) with (d . a) in +CHORD-ALTERATIONS+ and d 5 or one of
+;;;;       the EXTENSIONS, an alteration; (:add d a) with d an add-degree (2 4
+;;;;       6 9 11 13) and a in -1..1, an addition (a tension pair is an
+;;;;       alteration, as in Cadd#11); (:subtract d 0) with d an omit-degree (3
+;;;;       5 9 11), an omission. Rules R1-R5 hold as when parsing, then the
+;;;;       fold: "dominant" ((:alter 5 1)) is C+7, "minor" ((:alter 5 -1)) the
+;;;;       diminished triad. Any other degree, or one that breaks a rule,
+;;;;       signals MUSIC-THEORY-ERROR (TEXT NIL, with a REASON): (:alter 3 1),
+;;;;       (:add 7 0), (:add 9 2), (:subtract 5 1), (:alter 9 -1) on
+;;;;       "dominant", (:add 9 0) on "dominant-ninth" (R4).
+;;;;   The value is well formed, with TEXT and DIALECT NIL. ALTERATIONS, ADDED
+;;;;   and OMITTED are sorted as the parser sorts them.
+;;;; Properties: for every well-formed chord C,
+;;;;   (multiple-value-bind (kind degrees) (chord-symbol-musicxml-kind c)
+;;;;     (musicxml-kind-chord-symbol kind (chord-symbol-root c)
+;;;;                                 :bass (chord-symbol-bass c) :degrees degrees))
+;;;; is equal to C in every slot but TEXT and DIALECT; and for each of the 25
+;;;; kinds X2 returns and every ROOT, CHORD-SYMBOL-MUSICXML-KIND of
+;;;; (musicxml-kind-chord-symbol kind root) is that kind and ().
 
 (in-package #:music-theory)
 
@@ -351,6 +439,18 @@ the key); Italian, French and German follow music21's convention, the root
 being the key's tonic (C F# Ab is the Italian sixth of C minor); Tristan is A4,
 A6 and A9 above the root; pedal is the root alone. \"other\" (a harmony made of
 <degree> additions only) has no symbol: NIL. \"none\" is N.C. Data.")
+
+(defparameter +musicxml-structural-degrees+
+  '((:diminished-7 :minor-7 ((:alter 5 -1) (:alter 7 -1)))
+    (:minor-major-7 :minor-7 ((:alter 7 1)))
+    (:half-diminished-7 :minor-7 ((:alter 5 -1)))
+    (:augmented-7 :dominant-7 ((:alter 5 1)))
+    (:augmented-major-7 :major-7 ((:alter 5 1))))
+  "(quality base-quality degrees): a seventh quality written in MusicXML as the
+kind of BASE-QUALITY (with the chord's EXTENSIONS) and these <degree> alterations,
+for the chords no kind names (C+M7, and the four with EXTENSIONS: C+9, Cø9, CmM9,
+C°9). Read in order (rules X2 and Y4 in the file header). Data (0.5.1,
+music-theory#16).")
 
 ;;; Derived tables ------------------------------------------------------------
 
@@ -642,6 +742,25 @@ ascending: sorted and free of repeats."
          (and (every #'integerp ranks)
               (loop for (a b) on ranks while b always (< a b))))))
 
+(defun %chord-items (chord)
+  "The parser items of CHORD's tones in slot order: ((:sus s) (:alter pair)... (:add
+pair)... (:omit d)...). %CHECK-CHORD-SYMBOL replays them, and so does
+MUSICXML-KIND-CHORD-SYMBOL for its kind's symbol (rule Y3)."
+  (append (and (chord-symbol-suspension chord) (list (list :sus (chord-symbol-suspension chord))))
+          (mapcar (lambda (pair) (list :alter pair)) (chord-symbol-alterations chord))
+          (mapcar (lambda (pair) (list :add pair)) (chord-symbol-added chord))
+          (mapcar (lambda (degree) (list :omit degree)) (chord-symbol-omitted chord))))
+
+(defun %admit-items (draft items)
+  "Admit ITEMS into DRAFT in order with %ADMIT-ITEM (rules R1-R6), and return DRAFT. At
+the first item refused, signal MUSIC-THEORY-ERROR (TEXT NIL) with the REASON \"breaks
+rule Rn: expected ...\"."
+  (dolist (item items draft)
+    (multiple-value-bind (expected rule) (%admit-item draft item)
+      (when expected
+        (error 'music-theory-error
+               :reason (format nil "breaks rule ~A: expected ~A" rule expected))))))
+
 (defun %check-chord-symbol (chord)
   "Signal MUSIC-THEORY-ERROR (TEXT NIL, with a REASON) unless CHORD is a well-formed
 CHORD-SYMBOL (W1-W5 in the file header); TYPE-ERROR for a non-CHORD-SYMBOL. R1-R5 are
@@ -683,14 +802,8 @@ W5 with the parser's own %FOLD-ROW."
            (reject "added tones are sorted, distinct (degree . alter) pairs of 2 4 6 9 11 13, not tension pairs"))
          (unless (%ranks-ascend-p omitted (lambda (degree) (position degree '(3 5 9 11))))
            (reject "omitted degrees are sorted and distinct, of 3 5 9 11"))
-         (let ((draft (%make-chord-draft quality extensions '())))            ; R1-R5
-           (dolist (item (append (and suspension (list (list :sus suspension)))
-                                 (mapcar (lambda (pair) (list :alter pair)) alterations)
-                                 (mapcar (lambda (pair) (list :add pair)) added)
-                                 (mapcar (lambda (degree) (list :omit degree)) omitted)))
-             (multiple-value-bind (expected rule) (%admit-item draft item)
-               (when expected
-                 (reject (format nil "breaks rule ~A: expected ~A" rule expected))))))
+         (%admit-items (%make-chord-draft quality extensions '())             ; R1-R5
+                       (%chord-items chord))
          (when (%fold-row quality alterations)                                ; W5
            (reject "a single fifth alteration that folds into another quality")))))))
 
@@ -878,3 +991,166 @@ not well formed."
                   (chord-symbol-suspension chord)
                   (%group-text alterations added omitted accidentals)
                   (and bass (pitch-class-string bass :accidentals accidentals)))))))
+
+;;; MusicXML <kind> ---------------------------------------------------------------
+
+(defparameter +musicxml-kind-chords+
+  (loop for (kind text) in +musicxml-kinds+
+        collect (cons kind (and text (parse-chord-symbol text :dialect :pop))))
+  "(kind . symbol) for every row of +MUSICXML-KINDS+, in table order: the row's text
+read with PARSE-CHORD-SYMBOL (:POP), NIL for \"other\". Rules X1, X2 and Y1-Y3 read
+it. Derived at load time, after PARSE-CHORD-SYMBOL is defined.")
+
+(defun %kind-tone-p (degree extensions)
+  "True when DEGREE is a tone that an :ALTER degree alters on a kind with EXTENSIONS:
+5 or one of the EXTENSIONS (rules X3 and Y6)."
+  (or (eql degree 5) (member degree extensions)))
+
+(defun %musicxml-kind-row (quality extensions suspension)
+  "Rule X2: the first (kind . symbol) of +MUSICXML-KIND-CHORDS+ whose symbol is a chord
+with QUALITY, EXTENSIONS and SUSPENSION and no ALTERATIONS, ADDED or OMITTED; or NIL."
+  (find-if (lambda (row)
+             (let ((symbol (cdr row)))
+               (and symbol
+                    (not (chord-symbol-no-chord-p symbol))
+                    (eq quality (chord-symbol-quality symbol))
+                    (equal extensions (chord-symbol-extensions symbol))
+                    (eql suspension (chord-symbol-suspension symbol))
+                    (null (chord-symbol-alterations symbol))
+                    (null (chord-symbol-added symbol))
+                    (null (chord-symbol-omitted symbol)))))
+           +musicxml-kind-chords+))
+
+(defun chord-symbol-musicxml-kind (chord)
+  "The MusicXML 4.0 <kind> value and the <degree> list (type value alter) that
+write CHORD, as two values (rules X1-X3 in the file header); the degree lists are
+fresh. MUSIC-THEORY-ERROR for a CHORD that is not well formed."
+  (check-type chord chord-symbol)
+  (%check-chord-symbol chord)
+  (if (chord-symbol-no-chord-p chord)
+      ;; X1: the kind whose symbol is N.C.
+      (values (car (rassoc-if (lambda (symbol) (and symbol (chord-symbol-no-chord-p symbol)))
+                              +musicxml-kind-chords+))
+              '())
+      (let* ((quality (chord-symbol-quality chord))
+             (extensions (chord-symbol-extensions chord))
+             (suspension (chord-symbol-suspension chord))
+             ;; X2: a kind that writes the suspension (the suspended rows), else the
+             ;; plain kind of QUALITY and EXTENSIONS ...
+             (written (and suspension (%musicxml-kind-row quality extensions suspension)))
+             (plain (or written (%musicxml-kind-row quality extensions nil)))
+             ;; ... else, when no kind names them, the base quality's kind.
+             (structural (and (null plain) (assoc quality +musicxml-structural-degrees+)))
+             (row (or plain (and structural
+                                 (%musicxml-kind-row (second structural) extensions nil)))))
+        (values (car row)
+                ;; X3: the groups in this order, each in its slot's order.
+                (append (mapcar #'copy-list (third structural))
+                        (and suspension (not written)
+                             (list (list :subtract 3 0) (list :add suspension 0)))
+                        (loop for (degree . alter) in (chord-symbol-alterations chord)
+                              collect (list (if (%kind-tone-p degree extensions) :alter :add)
+                                            degree alter))
+                        (loop for (degree . alter) in (chord-symbol-added chord)
+                              collect (list :add degree alter))
+                        (loop for degree in (chord-symbol-omitted chord)
+                              collect (list :subtract degree 0)))))))
+
+(defun %musicxml-degrees-p (object)
+  "True for a proper list of MusicXML degrees: lists (type value alter) of a TYPE
+:ADD, :ALTER or :SUBTRACT and two integers."
+  (do ((tail object (rest tail)))
+      ((atom tail) (null tail))
+    (unless (typep (first tail)
+                   '(cons (member :add :alter :subtract) (cons integer (cons integer null))))
+      (return nil))))
+
+(defun %structural-row (quality degrees)
+  "Rule Y4: the first +MUSICXML-STRUCTURAL-DEGREES+ row whose base quality is QUALITY,
+whose degrees are all in DEGREES, and such that no other :ALTER of DEGREES alters one
+of that row's own degree values; or NIL. Only :ALTER degrees alter a value."
+  (find-if (lambda (row)
+             (destructuring-bind (structural base row-degrees) row
+               (declare (ignore structural))
+               (and (eq base quality)
+                    (subsetp row-degrees degrees :test #'equal)
+                    (every (lambda (degree)
+                             (or (not (eq :alter (first degree)))
+                                 (not (member (second degree) row-degrees :key #'second))
+                                 (member degree row-degrees :test #'equal)))
+                           degrees))))
+           +musicxml-structural-degrees+))
+
+(defun %suspension-tail (quality degrees)
+  "Rule Y5: the first tail of DEGREES that starts with (:subtract 3 0) followed
+directly by (:add 2 0) or (:add 4 0), when QUALITY has a major third
+(+SUSPENDABLE-QUALITIES+); else NIL."
+  (and (member quality +suspendable-qualities+)
+       (loop for tail on degrees
+             when (and (equal '(:subtract 3 0) (first tail))
+                       (member (second tail) '((:add 2 0) (:add 4 0)) :test #'equal))
+               return tail)))
+
+(defun %degree-item (degree extensions)
+  "Rule Y6: the parser item that DEGREE reads as on a kind with EXTENSIONS, or NIL
+when it reads as none. An added tension pair is an alteration, as %TOKEN-ITEM reads
+Cadd#11. Data conversion only: R1-R6 are %ADMIT-ITEM's."
+  (destructuring-bind (type value alter) degree
+    (let ((pair (cons value alter)))
+      (ecase type
+        (:alter (and (member pair +chord-alterations+ :test #'equal)
+                     (%kind-tone-p value extensions)
+                     (list :alter pair)))
+        (:add (and (%add-degree-p value) (<= -1 alter 1)
+                   (list (if (member pair +chord-alterations+ :test #'equal) :alter :add)
+                         pair)))
+        (:subtract (and (eql alter 0) (%omit-degree-p value) (list :omit value)))))))
+
+(defun %musicxml-chord (kind symbol root bass degrees)
+  "Rules Y3-Y6: the CHORD-SYMBOL on ROOT over BASS that DEGREES make of KIND's
+SYMBOL. On the quality after Y4, SYMBOL's items and Y5's suspension, then each other
+degree in order, are admitted with %ADMIT-ITEMS (R1-R6) as the parser admits them;
+%DRAFT-CHORD then folds and sorts. TEXT and DIALECT are NIL."
+  (let* ((row (%structural-row (chord-symbol-quality symbol) degrees))            ; Y4
+         (quality (if row (first row) (chord-symbol-quality symbol)))
+         (extensions (chord-symbol-extensions symbol))
+         ;; Each of the row's degrees is used once; a repeat stays for Y6.
+         (degrees (if row
+                      (reduce (lambda (left used) (remove used left :test #'equal :count 1))
+                              (third row) :initial-value degrees)
+                      degrees))
+         (tail (%suspension-tail quality degrees))                                ; Y5
+         (others (if tail (append (ldiff degrees tail) (cddr tail)) degrees))
+         (draft (%admit-items (%make-chord-draft quality extensions '())          ; Y3
+                              (append (%chord-items symbol)
+                                      (and tail (list (list :sus (second (second tail)))))))))
+    (dolist (degree others)                                                      ; Y6
+      (let ((item (%degree-item degree extensions)))
+        (unless item
+          (error 'music-theory-error
+                 :reason (format nil "~(~S~) is not an alteration, addition or omission on ~S"
+                                 degree kind)))
+        (%admit-items draft (list item))))
+    (%draft-chord draft root bass nil nil)))
+
+(defun musicxml-kind-chord-symbol (kind root &key bass degrees)
+  "The CHORD-SYMBOL a MusicXML <harmony> of KIND on ROOT with BASS and DEGREES
+writes, or NIL for \"other\" (rules Y1-Y6 in the file header). MUSIC-THEORY-ERROR
+for a string that is not a MusicXML 4.0 kind (TEXT = KIND) or for DEGREES that the
+kind's chord symbol cannot hold (TEXT NIL); TYPE-ERROR for an argument of the wrong
+type."
+  (check-type kind string)
+  (let ((row (or (assoc kind +musicxml-kind-chords+ :test #'string=)
+                 (error 'music-theory-error :text kind :reason "not a MusicXML 4.0 kind"))))
+    ;; Y1: "other" has no symbol, so NIL whatever ROOT, BASS and DEGREES are.
+    (when (cdr row)
+      (check-type degrees (satisfies %musicxml-degrees-p)
+                  "a proper list of MusicXML degrees (type value alter)")
+      (cond ((chord-symbol-no-chord-p (cdr row))                                ; Y2 "none"
+             (when degrees
+               (error 'music-theory-error :reason "N.C. has no degrees"))
+             (make-chord-symbol :no-chord-p t))
+            (t
+             (check-type root pitch-class-name)
+             (check-type bass (or null pitch-class-name))
+             (%musicxml-chord kind (cdr row) root bass degrees))))))

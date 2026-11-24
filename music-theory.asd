@@ -1,5 +1,5 @@
 (defsystem "music-theory"
-  :version "0.5.0"
+  :version "0.5.1"
   :description "Music theory for cl-stack: spelled pitch, intervals, keys, meter, chord symbols, Roman numerals, spelling and key detection"
   :author "egao1980"
   :license "MIT"
@@ -32,7 +32,8 @@
                (:file "mt1-test")
                (:file "mt2-test")
                (:file "mt3-test")
-               (:file "mt4-test"))
+               (:file "mt4-test")
+               (:file "mt51-test"))
   :perform (test-op (o c)
              (unless (symbol-call :rove :run c)
                (error "tests failed for ~A" (component-name c)))))
