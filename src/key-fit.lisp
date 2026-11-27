@@ -136,9 +136,129 @@
   "The 100 offsets FIT-KEY searches, in cents, in tie order: smaller |d| first, then
 the negative one: 0 -1 1 -2 2 … -49 49 -50. Data.")
 
+;;; Kernel: the take, the one search, the hint and the notes ------------------------
+
+(defun %fit-events-p (object)
+  "True for FIT-KEY's EVENTS: a proper list of REAL pitches and (pitch . weight)
+conses, the pitch a REAL and the weight a non-negative REAL."
+  (and (%proper-list-p object)
+       (every (lambda (event)
+                (if (consp event)
+                    (and (realp (car event)) (typep (cdr event) '(real 0)))
+                    (realp event)))
+              object)))
+
+(defun %fit-pairs (events)
+  "Checked EVENTS as a fresh list of (q . w), pitch and weight taken as RATIONAL; a
+bare pitch weighs 1."
+  (mapcar (lambda (event)
+            (if (consp event)
+                (cons (rational (car event)) (rational (cdr event)))
+                (cons (rational event) 1)))
+          events))
+
+(defun %improves-p (entry incumbent)
+  "The search's one comparison: ENTRY, a (key c . v) of %KEY-SCORES, replaces
+INCUMBENT (one such entry, or NIL for none yet) only when it ranks strictly before
+it (%RANKS-BEFORE-P). Scanned in tie order, the first maximum is kept."
+  (or (null incumbent) (%ranks-before-p entry incumbent)))
+
+(defun %fit-search (pairs modes hint-key)
+  "One pass over the folds of PAIRS ((q . w) rationals) at the offsets of
++KEY-FIT-OFFSETS+, in that order, and over %KEY-SCORES's candidates within each.
+The fold at d is the PITCH-CLASS-HISTOGRAM of the pairs lowered by d/100. Returns
+five values: H, the largest fold variance; the best offset; the fresh list of the
+24 (key c . v) entries of that offset's fold; and the best offset and entry of
+HINT-KEY (a key of +DETECT-KEY-KEYS+, or NIL for none). The best pair and the
+hint's use the one comparison, %IMPROVES-P."
+  (let ((h 0) (best nil) (offset nil) (entries nil) (hint-offset nil) (hint-entry nil))
+    (dolist (d +key-fit-offsets+ (values h offset entries hint-offset hint-entry))
+      (let ((shift (/ d 100)))
+        (multiple-value-bind (cells variance)
+            (%centered (pitch-class-histogram
+                        (mapcar (lambda (pair) (cons (- (car pair) shift) (cdr pair)))
+                                pairs)))
+          (setf h (max h variance))
+          (let ((scores (%key-scores cells modes)))
+            (dolist (entry scores)
+              (when (%improves-p entry best)
+                (setf best entry offset d entries scores))
+              (when (and (eq (car entry) hint-key) (%improves-p entry hint-entry))
+                (setf hint-entry entry hint-offset d)))))))))
+
+(defun %fit-notes (pairs offset)
+  "Per pair of PAIRS, in order, with q its pitch lowered by OFFSET/100: the nearest
+MIDI number (floor (+ q 1/2)), a half rounding up, and the deviation 100·(q - midi)
+in cents, exact. Two lists, as two values."
+  (loop with shift = (/ offset 100)
+        for pair in pairs
+        for q = (- (car pair) shift)
+        for midi = (floor (+ q 1/2))
+        collect midi into midis
+        collect (* 100 (- q midi)) into deviations
+        finally (return (values midis deviations))))
+
+(defun %hint-candidate (hint)
+  "The key of +DETECT-KEY-KEYS+ with HINT's tonic pitch class and mode (C# major →
+Db major)."
+  (find-if (lambda (key)
+             (and (eq (key-mode key) (key-mode hint))
+                  (= (pitch-class (key-tonic key)) (pitch-class (key-tonic hint)))))
+           +detect-key-keys+))
+
+(defun %hint-distance (hint ranking)
+  "Semitones from HINT's tonic up to the tonic of the first RANKING entry in HINT's
+mode, folded into -5 … 6 (a tritone is 6)."
+  (let* ((lead (car (find (key-mode hint) ranking :key (lambda (entry) (key-mode (car entry))))))
+         (s (mod (- (pitch-class (key-tonic lead)) (pitch-class (key-tonic hint))) 12)))
+    (if (> s 6) (- s 12) s)))
+
+(defun %no-key-evidence (reason)
+  "Signal NO-KEY-EVIDENCE (TEXT NIL, REASON) with ERROR, inside a USE-VALUE restart.
+Returns the value given to USE-VALUE, unchecked: FIT-KEY returns it."
+  (restart-case (error 'no-key-evidence :reason reason)
+    (use-value (value)
+      :report (lambda (stream)
+                (format stream "Supply a value for FIT-KEY to return instead of a fit (~A)."
+                        reason))
+      :interactive (lambda ()
+                     (format *query-io* "~&Form to evaluate, its value returned by FIT-KEY: ")
+                     (finish-output *query-io*)
+                     (list (eval (read *query-io*))))
+      value)))
+
+;;; Function ---------------------------------------------------------------------------
+
 (defun fit-key (events &key hint (profiles :krumhansl-kessler))
   "The candidate key and global tuning offset (cents, -50 … 49) that best fit
 EVENTS, real MIDI pitch centres or (pitch . weight) conses, as a KEY-FIT; with
 HINT, how the hint key fares (see the file header)."
-  (declare (ignorable events hint profiles))
-  (%mt5-pending 'fit-key))
+  (check-type events (satisfies %fit-events-p)
+              "a proper list of real pitches or (pitch . non-negative real weight) conses")
+  (check-type hint (or null key))
+  (check-type profiles (satisfies %key-profiles-p)
+              "a +KEY-PROFILES+ name or a list (major minor) of two sequences of 12 reals")
+  (let ((modes (%profile-modes profiles))
+        (pairs (%fit-pairs events)))
+    (when (zerop (reduce #'+ pairs :key #'cdr))
+      (return-from fit-key (%no-key-evidence "zero total weight")))
+    (multiple-value-bind (h offset entries hint-offset hint-entry)
+        (%fit-search pairs modes (and hint (%hint-candidate hint)))
+      (when (zerop h)
+        (return-from fit-key (%no-key-evidence "constant histogram at every offset")))
+      (flet ((score (entry)
+               (destructuring-bind (c . v) (cdr entry)
+                 (%correlation c v h))))
+        (let ((ranking (mapcar (lambda (entry) (cons (car entry) (score entry)))
+                               (stable-sort entries #'%ranks-before-p))))
+          (multiple-value-bind (midis deviations) (%fit-notes pairs offset)
+            (make-key-fit :key (car (first ranking))
+                          :offset offset
+                          :correlation (cdr (first ranking))
+                          :ranking ranking
+                          :midis midis
+                          :deviations deviations
+                          :hint hint
+                          :hint-offset hint-offset
+                          :hint-correlation (and hint (score hint-entry))
+                          :hint-distance (and hint (%hint-distance hint ranking)))))))))

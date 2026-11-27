@@ -78,8 +78,3 @@ symbols (0.5.1); key fit with a tuning offset for pitch centres in cents (MT5)."
    #:parse-roman #:roman-name #:chord-for #:roman-for #:roman-mixture-p))
 
 (in-package #:music-theory)
-
-(defun %mt5-pending (name)
-  "Contract stub for slice MT5 (key fit with a tuning offset). Every call is
-replaced by the implementation, then this function is deleted."
-  (error "music-theory MT5 pending: ~A" name))

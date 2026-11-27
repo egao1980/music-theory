@@ -190,11 +190,14 @@ pitches, weighted by :DURATION or :COUNT (see the file header)."
       (multiple-value-bind (pitch duration)
           (if (consp event) (values (car event) (cdr event)) (values event 1))
         (check-type duration (real 0) "a non-negative real duration")
-        (let ((class (etypecase pitch
-                       (integer (mod pitch 12))
-                       ((or spelled-pitch pitch-class-name) (pitch-class pitch))
-                       (real (%mt5-pending 'pitch-class-histogram)))))
-          (incf (svref cells class) (if (eq weight :count) 1 duration)))))))
+        (let ((amount (if (eq weight :count) 1 duration)))
+          (etypecase pitch
+            (integer (incf (svref cells (mod pitch 12)) amount))
+            ((or spelled-pitch pitch-class-name) (incf (svref cells (pitch-class pitch)) amount))
+            (real (multiple-value-bind (n f) (floor (rational pitch))
+                    (incf (svref cells (mod n 12)) (* amount (- 1 f)))
+                    (when (plusp f)
+                      (incf (svref cells (mod (1+ n) 12)) (* amount f)))))))))))
 
 (defun detect-key (histogram &key (profiles :krumhansl-kessler))
   "The 24 candidate keys ranked by correlation with PROFILES, best first, as
