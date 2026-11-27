@@ -8,7 +8,7 @@
 tempo (MT1); keys, scale degrees and Roman numerals (MT2); chord symbols: the
 grammar, dialects, realisation and essential tones (MT3); spelling, key
 detection and transposition to a key (MT4); MusicXML <kind> values for chord
-symbols (0.5.1).")
+symbols (0.5.1); key fit with a tuning offset for pitch centres in cents (MT5).")
   (:export
    ;; Conditions (all slices; see conditions.lisp)
    #:music-theory-error #:music-theory-warning
@@ -19,6 +19,7 @@ symbols (0.5.1).")
    #:skip-chord-symbol
    #:unknown-chord-quality #:unknown-chord-quality-text
    #:ambiguous-spelling #:ambiguous-spelling-midi #:ambiguous-spelling-candidates
+   #:no-key-evidence
    ;; Spelled pitches (MT0)
    #:spelled-pitch #:make-spelled-pitch #:spelled-pitch-p
    #:spelled-pitch-letter #:spelled-pitch-alter #:spelled-pitch-octave
@@ -63,6 +64,13 @@ symbols (0.5.1).")
    #:spell-midi #:spell-sequence
    #:pitch-class-histogram #:detect-key
    #:transpose-to-key #:choose-enharmonic-key
+   ;; Key fit with a tuning offset (MT5)
+   #:fit-key
+   #:key-fit #:make-key-fit #:key-fit-p
+   #:key-fit-key #:key-fit-offset #:key-fit-correlation #:key-fit-ranking
+   #:key-fit-midis #:key-fit-deviations
+   #:key-fit-hint #:key-fit-hint-offset #:key-fit-hint-correlation
+   #:key-fit-hint-distance
    ;; Roman numerals (MT2)
    #:roman-numeral #:make-roman-numeral #:roman-numeral-p
    #:roman-numeral-degree #:roman-numeral-alteration #:roman-numeral-quality
@@ -70,3 +78,8 @@ symbols (0.5.1).")
    #:parse-roman #:roman-name #:chord-for #:roman-for #:roman-mixture-p))
 
 (in-package #:music-theory)
+
+(defun %mt5-pending (name)
+  "Contract stub for slice MT5 (key fit with a tuning offset). Every call is
+replaced by the implementation, then this function is deleted."
+  (error "music-theory MT5 pending: ~A" name))

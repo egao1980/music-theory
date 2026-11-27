@@ -213,3 +213,18 @@ The minor rows of the issue need the melodic and natural forms in S1; the two ma
 ## 0.5.1: octaves in text (music-theory#15) and MusicXML kinds (music-theory#16)
 
 No new fixture. The rows in `tests/mt51-test.lisp` were computed with independent reference implementations of the amended rules. For music-theory#16 that implementation turned every well-formed chord of an enumeration (each quality with each allowed EXTENSIONS, SUSPENSION, set of ALTERATIONS, up to two ADDED pairs and set of OMITTED degrees: 336,176 chords) into a kind and degrees and back, unchanged; the test does the same for the 981 chords of `mt3-symbols.sexp` on five roots. MusicXML's own `<degree-alter>` convention (an added degree relative to a dominant chord, an altered one relative to the kind) is followed.
+
+## MT5: key fit with a tuning offset (music-theory#22)
+
+No new fixture. `tests/mt5-test.lisp` builds its takes from `mt4-melodies.sexp`: in tune, shifted by whole cents or semitones (exact rationals), as double-floats, detuned note by note, or drifting. The detuning comes from a pinned generator in the test file, `make-draws` (Park–Miller, x ← 16807·x mod (2³¹ − 1)), so every implementation draws the same numbers. The rules of `src/key-fit.lisp` are exact, so any implementation of them computes the same fits. The expectations come from two independent reference implementations of the header, one in Lisp and one in exact Python fractions. They agree on every row. Neither is committed.
+
+**Why the score is not each fold's Pearson r.** Splitting a pitch between its two nearest classes smooths the histogram, and Pearson's division by the histogram's own spread rewards smoothing. Under Krumhansl–Kessler, a search on Pearson r puts 28 of the 50 melodies, in tune, 3 to 46 cents off: Greensleeves at −21, Canon in D at −46 and in G major. Dividing every covariance by the largest spread H among the 100 folds keeps the ranking a covariance ranking. That puts all 50 at 0 in DETECT-KEY's key, and the header proves it for any in-tune take. Rounding instead of splitting gives one histogram for every offset that moves no pitch across a half semitone, so the offset cannot be read.
+
+**Robustness, calibrated.** The counts the tests assert are those both reference implementations compute:
+
+| Takes (`mt5-test.lisp`) | key = the in-tune fit | in the in-tune top two | offset within 5 / 10 cents | worst offset error |
+|-------------------------|----------------------:|-----------------------:|---------------------------:|-------------------:|
+| `detuned-take`: sung −40 … 40 cents off, each note detuned by the sum of three draws in −10 … 10 (σ ≈ 10.5, at most 30) | 48/50 | 50/50 | 40/50, 47/50 | 15 cents |
+| `drifting-take`: sinking evenly by 20 cents from the first note to the last | 48/50 | — | inside the drift: 50/50 | — |
+
+Every miss has a near-tie in tune between its first two keys: Silent Night (B♭ major, D minor) and O Come All Ye Faithful (A major, E major) detuned, and The Blue Danube (D major, B minor) and the Largo (D♭ major, A♭ major) drifting.

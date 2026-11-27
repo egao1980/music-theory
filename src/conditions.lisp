@@ -10,6 +10,9 @@
 ;;;;   SPELL-MIDI, SPELL-SEQUENCE (MT4): AMBIGUOUS-SPELLING is signalled with
 ;;;;     SIGNAL (silent unless handled) inside USE-VALUE (a SPELLED-PITCH to use)
 ;;;;     and MUFFLE-WARNING (keep the default spelling); see src/spell.lisp.
+;;;;   FIT-KEY (MT5): NO-KEY-EVIDENCE inside a USE-VALUE restart; its value is
+;;;;     returned from FIT-KEY. Its argument checks are CHECK-TYPE, so a
+;;;;     TYPE-ERROR offers STORE-VALUE; see src/key-fit.lisp.
 
 (in-package #:music-theory)
 
@@ -56,6 +59,12 @@ root-position major or minor triad."))
                      (chord-symbol-parse-error-position c)
                      (chord-symbol-parse-error-expected c)
                      (music-theory-error-reason c)))))
+
+(define-condition no-key-evidence (music-theory-error) ()
+  (:documentation "FIT-KEY's events give no key anything to correlate with: they
+weigh nothing in total (REASON \"zero total weight\"), or every offset folds them
+into a constant histogram (REASON \"constant histogram at every offset\"). TEXT is
+NIL. Signalled with ERROR inside a USE-VALUE restart (src/key-fit.lisp)."))
 
 (define-condition music-theory-warning (warning) ())
 
