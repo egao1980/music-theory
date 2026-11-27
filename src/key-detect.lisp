@@ -5,15 +5,26 @@
 ;;;;   EVENTS  a list. Each event is (pitch . duration), or a bare pitch, which
 ;;;;           counts as (pitch . 1). A pitch is an INTEGER (a MIDI number; its
 ;;;;           class is (mod pitch 12), so 61 and -11 are both 1), a
-;;;;           SPELLED-PITCH or a PITCH-CLASS-NAME (PITCH-CLASS: Cb is 11). A
-;;;;           duration is a non-negative REAL, in whole notes or in any unit:
-;;;;           only ratios matter to DETECT-KEY.
+;;;;           SPELLED-PITCH or a PITCH-CLASS-NAME (PITCH-CLASS: Cb is 11), or
+;;;;           (0.6.0) any other REAL, a MIDI number with cents in its fraction
+;;;;           (61.37 is C#4 and 37 cents). A duration is a non-negative REAL,
+;;;;           in whole notes or in any unit: only ratios matter to DETECT-KEY.
 ;;;;   WEIGHT  :DURATION (default): each event adds its duration to its cell.
 ;;;;           :COUNT: each event adds 1, whatever its duration.
-;;;; Sums are exact: rational durations give rational cells, and no event gives
-;;;; twelve zeros (integer 0). Anything else (an improper list, a pitch of
-;;;; another type, a negative or non-real duration, another WEIGHT) is a
-;;;; TYPE-ERROR.
+;;;;   Real pitches  a REAL pitch is taken as RATIONAL, q = (rational pitch),
+;;;;           and its amount (duration or 1) is split between the two pitch
+;;;;           classes around it in proportion to its nearness to each: with
+;;;;           n = (floor q) and f = q - n, cell (mod n 12) gets amount·(1 - f)
+;;;;           and, when f > 0, cell (mod (1+ n) 12) gets amount·f. An integer
+;;;;           (f = 0) adds all of it to its class, as before. 60.5 gives half
+;;;;           to C and half to C#, 6137/100 gives 63/100 to C# and 37/100 to D,
+;;;;           71.75 a quarter to B and three quarters to C, -1/2 half to B and
+;;;;           half to C; 60.0d0 is C. MT5's FIT-KEY folds pitch centres this
+;;;;           way (src/key-fit.lisp).
+;;;; Sums are exact: rational durations give rational cells (a float pitch is
+;;;; exact too, as its RATIONAL), and no event gives twelve zeros (integer 0).
+;;;; Anything else (an improper list, a pitch of another type, a negative or
+;;;; non-real duration, another WEIGHT) is a TYPE-ERROR.
 ;;;;
 ;;;; DETECT-KEY histogram &key (profiles :krumhansl-kessler) → a list of 24
 ;;;; conses (key . correlation), best first, one per candidate key.
@@ -135,6 +146,38 @@ reorders keys and |r| ≤ 1."
   (let ((s (sqrt (float (/ (* c c) (* v histogram-variance)) 1d0))))
     (if (minusp c) (- s) s)))
 
+(defun %profile-modes (profiles)
+  "Per mode, major then minor, (centered-weights . variance) of PROFILES, a DETECT-KEY
+PROFILES argument that %KEY-PROFILES-P accepts. Signals MUSIC-THEORY-ERROR (REASON
+\"constant key profile\") when a profile's 12 weights are all equal. Shared by
+DETECT-KEY and FIT-KEY."
+  (let ((modes (mapcar (lambda (weights)
+                         (multiple-value-bind (centered variance) (%centered weights)
+                           (cons centered variance)))
+                       (if (symbolp profiles)
+                           (cddr (assoc profiles +key-profiles+))
+                           profiles))))
+    (when (some (lambda (mode) (zerop (cdr mode))) modes)
+      (error 'music-theory-error :reason "constant key profile"))
+    modes))
+
+(defun %key-scores (cells modes)
+  "The 24 candidates of +DETECT-KEY-KEYS+ scored against CELLS, a centered histogram
+as %CENTERED returns it: a fresh list of (key c . v), in candidate order. C is the
+covariance of CELLS with the key's mode profile rotated to its tonic (the header's
+numerator) and V that profile's variance; MODES as %PROFILE-MODES returns. Exact.
+Shared by DETECT-KEY and FIT-KEY; %RANKS-BEFORE-P orders the entries."
+  (loop for key in +detect-key-keys+
+        for tonic = (pitch-class (key-tonic key))
+        for (weights . variance) = (if (eq (key-mode key) :major)
+                                       (first modes)
+                                       (second modes))
+        collect (list* key
+                       (loop for i below 12
+                             sum (* (svref weights (mod (- i tonic) 12))
+                                    (svref cells i)))
+                       variance)))
+
 ;;; Functions --------------------------------------------------------------------
 
 (defun pitch-class-histogram (events &key (weight :duration))
@@ -147,10 +190,14 @@ pitches, weighted by :DURATION or :COUNT (see the file header)."
       (multiple-value-bind (pitch duration)
           (if (consp event) (values (car event) (cdr event)) (values event 1))
         (check-type duration (real 0) "a non-negative real duration")
-        (let ((class (etypecase pitch
-                       (integer (mod pitch 12))
-                       ((or spelled-pitch pitch-class-name) (pitch-class pitch)))))
-          (incf (svref cells class) (if (eq weight :count) 1 duration)))))))
+        (let ((amount (if (eq weight :count) 1 duration)))
+          (etypecase pitch
+            (integer (incf (svref cells (mod pitch 12)) amount))
+            ((or spelled-pitch pitch-class-name) (incf (svref cells (pitch-class pitch)) amount))
+            (real (multiple-value-bind (n f) (floor (rational pitch))
+                    (incf (svref cells (mod n 12)) (* amount (- 1 f)))
+                    (when (plusp f)
+                      (incf (svref cells (mod (1+ n) 12)) (* amount f)))))))))))
 
 (defun detect-key (histogram &key (profiles :krumhansl-kessler))
   "The 24 candidate keys ranked by correlation with PROFILES, best first, as
@@ -158,29 +205,10 @@ pitches, weighted by :DURATION or :COUNT (see the file header)."
   (check-type histogram (satisfies %histogram-p) "a list or vector of 12 non-negative reals")
   (check-type profiles (satisfies %key-profiles-p)
               "a +KEY-PROFILES+ name or a list (major minor) of two sequences of 12 reals")
-  ;; Per mode, (centered-weights . variance).
-  (let ((modes (mapcar (lambda (weights)
-                         (multiple-value-bind (centered variance) (%centered weights)
-                           (cons centered variance)))
-                       (if (symbolp profiles)
-                           (cddr (assoc profiles +key-profiles+))
-                           profiles))))
-    (when (some (lambda (mode) (zerop (cdr mode))) modes)
-      (error 'music-theory-error :reason "constant key profile"))
+  (let ((modes (%profile-modes profiles)))
     (multiple-value-bind (cells histogram-variance) (%centered histogram)
       (unless (zerop histogram-variance)
-        (let ((scored                   ; (key c . v), fresh, in candidate order
-                (loop for key in +detect-key-keys+
-                      for tonic = (pitch-class (key-tonic key))
-                      for (weights . variance) = (if (eq (key-mode key) :major)
-                                                     (first modes)
-                                                     (second modes))
-                      collect (list* key
-                                     (loop for i below 12
-                                           sum (* (svref weights (mod (- i tonic) 12))
-                                                  (svref cells i)))
-                                     variance))))
-          (mapcar (lambda (entry)
-                    (destructuring-bind (key c . v) entry
-                      (cons key (%correlation c v histogram-variance))))
-                  (stable-sort scored #'%ranks-before-p)))))))
+        (mapcar (lambda (entry)
+                  (destructuring-bind (key c . v) entry
+                    (cons key (%correlation c v histogram-variance))))
+                (stable-sort (%key-scores cells modes) #'%ranks-before-p))))))
